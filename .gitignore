@@ -9,3 +9,4 @@ modelo/dataset/
 modelo/**/*.pt
 .ipynb_checkpoints/
 .DS_Store
+.vscode/
