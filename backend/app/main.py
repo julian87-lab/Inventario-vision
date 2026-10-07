@@ -2,17 +2,20 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
 from .deps import DbSession
-
+from .routers import auth
 
 app = FastAPI(
     title="Inventario Vision API",
     version="0.1.0",
 )
 
+app.include_router(auth.router, prefix="/api")
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
 
 @app.get("/health/db")
 async def health_db(db: DbSession) -> dict[str, str]:
