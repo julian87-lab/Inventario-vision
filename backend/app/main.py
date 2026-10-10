@@ -2,7 +2,9 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
 from .deps import DbSession
-from .routers import auth
+from .routers import alertas, auth, inventario, productos
+
+
 
 app = FastAPI(
     title="Inventario Vision API",
@@ -10,7 +12,9 @@ app = FastAPI(
 )
 
 app.include_router(auth.router, prefix="/api")
-
+app.include_router(productos.router, prefix="/api")
+app.include_router(inventario.router, prefix="/api")
+app.include_router(alertas.router, prefix="/api")
 
 @app.get("/health")
 def health() -> dict[str, str]:
