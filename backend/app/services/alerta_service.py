@@ -1,8 +1,7 @@
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..models import Alerta, Producto
-from sqlalchemy import select, text
 
 
 async def sincronizar_alerta_producto(db, producto: Producto) -> None:
@@ -13,9 +12,9 @@ async def sincronizar_alerta_producto(db, producto: Producto) -> None:
             pg_insert(Alerta)
             .values(producto_id=producto.id, tipo=tipo, atendida=False)
             .on_conflict_do_nothing(
-    index_elements=[Alerta.producto_id, Alerta.tipo],
-    index_where=text("NOT atendida"),
-)
+                index_elements=[Alerta.producto_id, Alerta.tipo],
+                index_where=text("NOT atendida"),
+            )
         )
         await db.execute(sentencia)
         return
@@ -37,4 +36,3 @@ async def listar_alertas_pendientes(db) -> list[Alerta]:
         .order_by(Alerta.fecha_hora.desc())
     )
     return list(resultado.scalars().all())
-
