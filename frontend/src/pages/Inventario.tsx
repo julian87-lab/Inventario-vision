@@ -14,6 +14,73 @@ import type {
 type TipoMovimiento = "venta" | "ajuste"
 
 
+const MAX_UPLOAD_BYTES = 9 * 1024 * 1024
+const MAX_IMAGE_SIDE = 1920
+
+async function prepararImagenParaSubida(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Selecciona un archivo de imagen.")
+  }
+
+  if (file.size <= MAX_UPLOAD_BYTES) {
+    return file
+  }
+
+  const image = new Image()
+  const objectUrl = URL.createObjectURL(file)
+
+  try {
+    image.src = objectUrl
+    await image.decode()
+
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight),
+    )
+
+    const canvas = document.createElement("canvas")
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+
+    const context = canvas.getContext("2d")
+    if (!context) {
+      throw new Error("El navegador no pudo preparar la imagen.")
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (result) => {
+          if (result) {
+            resolve(result)
+          } else {
+            reject(new Error("No se pudo comprimir la imagen."))
+          }
+        },
+        "image/jpeg",
+        0.86,
+      )
+    })
+
+    if (blob.size > MAX_UPLOAD_BYTES) {
+      throw new Error(
+        "La imagen sigue superando 9 MB después de prepararla. Elige una foto más pequeña.",
+      )
+    }
+
+    const name = file.name.replace(/\.[^.]+$/, "") || "recepcion"
+
+    return new File([blob], `${name}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    })
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+
 export default function Inventario() {
   const { user, signOut } = useAuth()
 
@@ -114,37 +181,37 @@ export default function Inventario() {
 
 
   async function enviarFoto(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError(null)
-    setMensaje(null)
+  event.preventDefault()
+  setError(null)
+  setMensaje(null)
 
-    if (!archivo) {
-      setError("Selecciona primero una foto.")
-      return
-    }
-
-    setSubiendo(true)
-
-    try {
-      const deteccion = await subirDeteccion(archivo)
-
-      setArchivo(null)
-      setVistaPrevia(null)
-      setMensaje(
-        `Foto procesada. La detección #${deteccion.id} está pendiente de revisión; el stock todavía no cambió.`,
-      )
-
-      await cargarDatos()
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "No se pudo subir y procesar la foto.",
-      )
-    } finally {
-      setSubiendo(false)
-    }
+  if (!archivo) {
+    setError("Toma una foto o elige una imagen de la galería.")
+    return
   }
+
+  setSubiendo(true)
+
+  try {
+    const imagenLista = await prepararImagenParaSubida(archivo)
+    const deteccion = await subirDeteccion(imagenLista)
+
+    setArchivo(null)
+    setMensaje(
+      `Foto procesada. La recepción #${deteccion.id} está pendiente de revisión; el stock aún no cambió.`,
+    )
+
+    await cargarDatos()
+  } catch (err) {
+    setError(
+      err instanceof ApiError || err instanceof Error
+        ? err.message
+        : "No se pudo subir y procesar la foto.",
+    )
+  } finally {
+    setSubiendo(false)
+  }
+}
 
 
   async function confirmarDeteccion(deteccion: Deteccion) {
@@ -340,31 +407,63 @@ export default function Inventario() {
           </p>
         </div>
 
-        <form className="space-y-3" onSubmit={enviarFoto}>
-          <label className="grid gap-2 text-sm">
-            Foto de la mercancía recibida
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(event) =>
-                setArchivo(event.target.files?.[0] ?? null)
-              }
-              required
-            />
-          </label>
+        <form className="space-y-4" onSubmit={enviarFoto}>
+  <div className="grid gap-3 sm:grid-cols-2">
+    <label className="flex min-h-16 cursor-pointer items-center justify-center rounded-md border bg-primary px-4 py-3 text-center font-medium text-primary-foreground">
+      Tomar foto
+      <input
+        className="sr-only"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={(event) =>
+          setArchivo(event.target.files?.[0] ?? null)
+        }
+      />
+    </label>
 
-          {vistaPrevia && (
-            <img
-              src={vistaPrevia}
-              alt="Vista previa de la mercancía"
-              className="max-h-80 rounded-md border object-contain"
-            />
-          )}
+    <label className="flex min-h-16 cursor-pointer items-center justify-center rounded-md border px-4 py-3 text-center font-medium">
+      Elegir de la galería
+      <input
+        className="sr-only"
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        onChange={(event) =>
+          setArchivo(event.target.files?.[0] ?? null)
+        }
+      />
+    </label>
+  </div>
 
-          <Button type="submit" disabled={subiendo || !archivo}>
-            {subiendo ? "Analizando foto…" : "Analizar foto"}
-          </Button>
-        </form>
+  {archivo && (
+    <p className="text-sm text-muted-foreground">
+      Seleccionada: {archivo.name} ·{" "}
+      {(archivo.size / (1024 * 1024)).toFixed(1)} MB
+    </p>
+  )}
+
+  {vistaPrevia && (
+    <img
+      src={vistaPrevia}
+      alt="Vista previa de la mercancía"
+      className="max-h-80 w-full rounded-md border object-contain"
+    />
+  )}
+
+  <Button
+    className="min-h-12 w-full sm:w-auto"
+    type="submit"
+    disabled={subiendo || !archivo}
+  >
+    {subiendo ? "Preparando y analizando…" : "Analizar recepción"}
+  </Button>
+
+  <p className="text-xs text-muted-foreground">
+    La cámara trasera se ofrece en teléfonos compatibles. Si el navegador
+    abre un selector, también puedes elegir una imagen de la galería.
+  </p>
+</form>
+
       </section>
 
       <section className="space-y-3">

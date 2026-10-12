@@ -22,7 +22,6 @@ export function clearToken(): void {
 export class ApiError extends Error {
   status: number
 
-
   constructor(status: number, message: string) {
     super(message)
     this.name = "ApiError"
@@ -83,7 +82,7 @@ export const api = {
     } else if (typeof body === "string") {
       headers.set("Content-Type", "application/json")
     }
-    // Para FormData no añadimos Content-Type; fetch lo genera con boundary.
+    // FormData: el navegador establece Content-Type y su boundary.
 
     return request<T>(path, {
       method: "POST",
@@ -121,3 +120,4 @@ export function subirDeteccion(file: File): Promise<Deteccion> {
 
   return api.post<Deteccion>("/detecciones", formData)
 }
+
