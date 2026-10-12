@@ -1,21 +1,27 @@
-import type { Token, Usuario } from "@/types/api"
+import type { Deteccion, Token, Usuario } from "@/types/api"
+
 
 const TOKEN_KEY = "token"
+
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
+
 export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token)
 }
+
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
+
 export class ApiError extends Error {
   status: number
+
 
   constructor(status: number, message: string) {
     super(message)
@@ -23,6 +29,7 @@ export class ApiError extends Error {
     this.status = status
   }
 }
+
 
 async function request<T>(
   path: string,
@@ -62,24 +69,30 @@ async function request<T>(
   return (await response.json()) as T
 }
 
+
 export const api = {
   get<T>(path: string): Promise<T> {
     return request<T>(path)
   },
 
   post<T>(path: string, body?: BodyInit): Promise<T> {
-  const headers =
-    body instanceof URLSearchParams
-      ? undefined
-      : { "Content-Type": "application/json" }
+    const headers = new Headers()
 
-  return request<T>(path, {
-    method: "POST",
-    body,
-    headers,
-  })
-},
+    if (body instanceof URLSearchParams) {
+      headers.set("Content-Type", "application/x-www-form-urlencoded")
+    } else if (typeof body === "string") {
+      headers.set("Content-Type", "application/json")
+    }
+    // Para FormData no añadimos Content-Type; fetch lo genera con boundary.
+
+    return request<T>(path, {
+      method: "POST",
+      body,
+      headers,
+    })
+  },
 }
+
 
 export async function login(
   email: string,
@@ -96,6 +109,15 @@ export async function login(
   return data
 }
 
+
 export function getMe(): Promise<Usuario> {
   return api.get<Usuario>("/auth/me")
+}
+
+
+export function subirDeteccion(file: File): Promise<Deteccion> {
+  const formData = new FormData()
+  formData.append("file", file)
+
+  return api.post<Deteccion>("/detecciones", formData)
 }

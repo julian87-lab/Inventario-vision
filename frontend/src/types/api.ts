@@ -40,4 +40,22 @@ export type Alerta = {
 }
 
 
+export type EstadoDeteccion = "pendiente" | "confirmada" | "descartada"
 
+export type DeteccionItem = {
+  id: number
+  producto_id: number
+  cantidad_detectada: number
+  confianza: number | null
+  cantidad_confirmada: number | null
+}
+
+export type Deteccion = {
+  id: number
+  usuario_id: number
+  fecha_hora: string
+  imagen_url: string
+  modelo_version: string
+  estado: EstadoDeteccion
+  items: DeteccionItem[]
+}

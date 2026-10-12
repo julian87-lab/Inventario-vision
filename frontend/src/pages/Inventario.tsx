@@ -2,10 +2,17 @@ import { useCallback, useEffect, useState } from "react"
 
 import { useAuth } from "@/auth/context"
 import { Button } from "@/components/ui/button"
-import { ApiError, api } from "@/api/client"
-import type { Alerta, Movimiento, Producto } from "@/types/api"
+import { ApiError, api, subirDeteccion } from "@/api/client"
+import type {
+  Alerta,
+  Deteccion,
+  Movimiento,
+  Producto,
+} from "@/types/api"
+
 
 type TipoMovimiento = "venta" | "ajuste"
+
 
 export default function Inventario() {
   const { user, signOut } = useAuth()
@@ -13,28 +20,45 @@ export default function Inventario() {
   const [productos, setProductos] = useState<Producto[]>([])
   const [movimientos, setMovimientos] = useState<Movimiento[]>([])
   const [alertas, setAlertas] = useState<Alerta[]>([])
+  const [detecciones, setDetecciones] = useState<Deteccion[]>([])
+
   const [productoId, setProductoId] = useState("")
   const [tipo, setTipo] = useState<TipoMovimiento>("venta")
   const [cantidad, setCantidad] = useState("")
+
+  const [archivo, setArchivo] = useState<File | null>(null)
+  const [vistaPrevia, setVistaPrevia] = useState<string | null>(null)
+  const [cantidadesEditadas, setCantidadesEditadas] = useState<
+    Record<number, Record<number, string>>
+  >({})
+
   const [cargando, setCargando] = useState(true)
+  const [subiendo, setSubiendo] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensaje, setMensaje] = useState<string | null>(null)
+
 
   const cargarDatos = useCallback(async () => {
     setError(null)
 
     try {
-      const [listaProductos, listaMovimientos, listaAlertas] =
-        await Promise.all([
-          api.get<Producto[]>("/productos"),
-          api.get<Movimiento[]>("/inventario/movimientos?limite=100"),
-          api.get<Alerta[]>("/alertas"),
-        ])
+      const [
+        listaProductos,
+        listaMovimientos,
+        listaAlertas,
+        listaDetecciones,
+      ] = await Promise.all([
+        api.get<Producto[]>("/productos"),
+        api.get<Movimiento[]>("/inventario/movimientos?limite=100"),
+        api.get<Alerta[]>("/alertas"),
+        api.get<Deteccion[]>("/detecciones?limite=100"),
+      ])
 
       setProductos(listaProductos)
       setMovimientos(listaMovimientos)
       setAlertas(listaAlertas)
+      setDetecciones(listaDetecciones)
 
       if (!productoId && listaProductos.length > 0) {
         setProductoId(String(listaProductos[0].id))
@@ -50,9 +74,155 @@ export default function Inventario() {
     }
   }, [productoId])
 
+
   useEffect(() => {
     void cargarDatos()
   }, [cargarDatos])
+
+
+  useEffect(() => {
+    if (!archivo) {
+      setVistaPrevia(null)
+      return
+    }
+
+    const url = URL.createObjectURL(archivo)
+    setVistaPrevia(url)
+
+    return () => URL.revokeObjectURL(url)
+  }, [archivo])
+
+
+  const nombreProducto = (id: number) =>
+    productos.find((producto) => producto.id === id)?.nombre ??
+    `Producto #${id}`
+
+
+  function cambiarCantidadConfirmada(
+    deteccionId: number,
+    productoIdDeteccion: number,
+    valor: string,
+  ) {
+    setCantidadesEditadas((actuales) => ({
+      ...actuales,
+      [deteccionId]: {
+        ...actuales[deteccionId],
+        [productoIdDeteccion]: valor,
+      },
+    }))
+  }
+
+
+  async function enviarFoto(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    setMensaje(null)
+
+    if (!archivo) {
+      setError("Selecciona primero una foto.")
+      return
+    }
+
+    setSubiendo(true)
+
+    try {
+      const deteccion = await subirDeteccion(archivo)
+
+      setArchivo(null)
+      setVistaPrevia(null)
+      setMensaje(
+        `Foto procesada. La detección #${deteccion.id} está pendiente de revisión; el stock todavía no cambió.`,
+      )
+
+      await cargarDatos()
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No se pudo subir y procesar la foto.",
+      )
+    } finally {
+      setSubiendo(false)
+    }
+  }
+
+
+  async function confirmarDeteccion(deteccion: Deteccion) {
+    setError(null)
+    setMensaje(null)
+
+    const items = deteccion.items.map((item) => {
+      const valorEditado =
+        cantidadesEditadas[deteccion.id]?.[item.producto_id]
+      const cantidad = Number(
+        valorEditado ?? String(item.cantidad_detectada),
+      )
+
+      return {
+        producto_id: item.producto_id,
+        cantidad_confirmada: cantidad,
+      }
+    })
+
+    if (
+      items.some(
+        (item) =>
+          !Number.isInteger(item.cantidad_confirmada) ||
+          item.cantidad_confirmada < 0,
+      )
+    ) {
+      setError("Las cantidades confirmadas deben ser enteros iguales o mayores que cero.")
+      return
+    }
+
+    setGuardando(true)
+
+    try {
+      await api.post<Deteccion>(
+        `/detecciones/${deteccion.id}/confirmar`,
+        JSON.stringify({ items }),
+      )
+
+      setMensaje(
+        `Recepción #${deteccion.id} confirmada. El inventario fue actualizado.`,
+      )
+      await cargarDatos()
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No se pudo confirmar la recepción.",
+      )
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+
+  async function descartarDeteccion(deteccionId: number) {
+    setError(null)
+    setMensaje(null)
+    setGuardando(true)
+
+    try {
+      await api.post<Deteccion>(
+        `/detecciones/${deteccionId}/descartar`,
+        JSON.stringify({ motivo: "Descartada desde la pantalla de inventario" }),
+      )
+
+      setMensaje(`Detección #${deteccionId} descartada. El stock no cambió.`)
+      await cargarDatos()
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "No se pudo descartar la detección.",
+      )
+    } finally {
+      setGuardando(false)
+    }
+  }
+
 
   async function registrarMovimiento(
     event: React.FormEvent<HTMLFormElement>,
@@ -64,7 +234,9 @@ export default function Inventario() {
     const unidades = Number(cantidad)
 
     if (!productoId || !Number.isInteger(unidades) || unidades === 0) {
-      setError("Selecciona un producto e ingresa una cantidad entera distinta de cero.")
+      setError(
+        "Selecciona un producto e ingresa una cantidad entera distinta de cero.",
+      )
       return
     }
 
@@ -99,9 +271,6 @@ export default function Inventario() {
     }
   }
 
-  const nombreProducto = (id: number) =>
-    productos.find((producto) => producto.id === id)?.nombre ??
-    `Producto #${id}`
 
   return (
     <main className="min-h-svh space-y-8 p-6">
@@ -159,6 +328,133 @@ export default function Inventario() {
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      <section className="space-y-4 rounded-md border p-4">
+        <div>
+          <h2 className="text-lg font-medium">Recibir mercancía por foto</h2>
+          <p className="text-sm text-muted-foreground">
+            La foto generará una propuesta pendiente. No cambiará el stock
+            hasta que revises y confirmes las cantidades.
+          </p>
+        </div>
+
+        <form className="space-y-3" onSubmit={enviarFoto}>
+          <label className="grid gap-2 text-sm">
+            Foto de la mercancía recibida
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(event) =>
+                setArchivo(event.target.files?.[0] ?? null)
+              }
+              required
+            />
+          </label>
+
+          {vistaPrevia && (
+            <img
+              src={vistaPrevia}
+              alt="Vista previa de la mercancía"
+              className="max-h-80 rounded-md border object-contain"
+            />
+          )}
+
+          <Button type="submit" disabled={subiendo || !archivo}>
+            {subiendo ? "Analizando foto…" : "Analizar foto"}
+          </Button>
+        </form>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">Detecciones pendientes</h2>
+
+        {detecciones.filter((d) => d.estado === "pendiente").length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No hay recepciones pendientes de revisar.
+          </p>
+        ) : (
+          detecciones
+            .filter((deteccion) => deteccion.estado === "pendiente")
+            .map((deteccion) => (
+              <article
+                key={deteccion.id}
+                className="space-y-4 rounded-md border p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-medium">
+                      Recepción #{deteccion.id}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {new Date(deteccion.fecha_hora).toLocaleString()} ·{" "}
+                      {deteccion.modelo_version}
+                    </p>
+                  </div>
+
+                  <a
+                    className="text-sm underline"
+                    href={deteccion.imagen_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Abrir foto original
+                  </a>
+                </div>
+
+                <div className="space-y-3">
+                  {deteccion.items.map((item) => (
+                    <label
+                      key={item.id}
+                      className="grid gap-1 text-sm sm:max-w-md"
+                    >
+                      {nombreProducto(item.producto_id)} — detectadas{" "}
+                      {item.cantidad_detectada}
+                      {item.confianza !== null &&
+                        ` · confianza ${(item.confianza * 100).toFixed(1)}%`}
+                      <input
+                        className="h-10 rounded-md border bg-background px-3"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={
+                          cantidadesEditadas[deteccion.id]?.[
+                            item.producto_id
+                          ] ?? String(item.cantidad_detectada)
+                        }
+                        onChange={(event) =>
+                          cambiarCantidadConfirmada(
+                            deteccion.id,
+                            item.producto_id,
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={guardando}
+                    onClick={() => void confirmarDeteccion(deteccion)}
+                  >
+                    {guardando ? "Guardando…" : "Confirmar recepción"}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={guardando}
+                    onClick={() => void descartarDeteccion(deteccion.id)}
+                  >
+                    Descartar
+                  </Button>
+                </div>
+              </article>
+            ))
         )}
       </section>
 
@@ -224,8 +520,8 @@ export default function Inventario() {
 
         <p className="text-xs text-muted-foreground">
           Venta: ingresa unidades positivas. Ajuste: positivo para sumar y
-          negativo para restar. Las entradas de nueva mercancía se harán al
-          confirmar detecciones, no con este formulario.
+          negativo para restar. Las entradas de mercancía se registran al
+          confirmar una detección.
         </p>
       </section>
 
@@ -253,7 +549,9 @@ export default function Inventario() {
                       {nombreProducto(alerta.producto_id)}
                     </td>
                     <td className="p-3">
-                      {alerta.tipo === "sin_stock" ? "Sin stock" : "Stock bajo"}
+                      {alerta.tipo === "sin_stock"
+                        ? "Sin stock"
+                        : "Stock bajo"}
                     </td>
                     <td className="p-3">
                       {new Date(alerta.fecha_hora).toLocaleString()}
