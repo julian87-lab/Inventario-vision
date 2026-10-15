@@ -188,4 +188,122 @@ def test_imagen_requiere_token(client, headers):
     con_token = client.get(ruta, headers=headers)
     assert con_token.status_code == 200
     assert con_token.headers["content-type"].startswith("image/")
-    
+
+
+
+def test_ajuste_negativo_actualiza_stock(client, headers):
+    response = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "ajuste",
+            "cantidad": -4,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+
+    movimiento = response.json()
+    assert movimiento["tipo"] == "ajuste"
+    assert movimiento["cantidad"] == -4
+    assert movimiento["stock_antes"] == 10
+    assert movimiento["stock_despues"] == 6
+    assert consultar_stock(client, headers)[1] == 6
+
+def test_ajuste_cero_se_rechaza(client, headers):
+    response = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "ajuste",
+            "cantidad": 0,
+        },
+    )
+
+    assert response.status_code == 422
+    assert consultar_stock(client, headers)[1] == 10
+
+    historial = client.get(
+        "/api/inventario/movimientos",
+        headers=headers,
+    )
+
+    assert historial.status_code == 200
+    assert historial.json() == []
+
+
+def test_stock_bajo_genera_una_sola_alerta(client, headers):
+    # Producto 1: stock inicial 10 y umbral 3.
+    response = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "venta",
+            "cantidad": 7,
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert consultar_stock(client, headers)[1] == 3
+
+    alertas = client.get("/api/alertas", headers=headers)
+    assert alertas.status_code == 200
+
+    pendientes = alertas.json()
+    assert len(pendientes) == 1
+    assert pendientes[0]["producto_id"] == 1
+    assert pendientes[0]["tipo"] == "stock_bajo"
+    assert pendientes[0]["atendida"] is False
+
+    # Otra venta mantiene stock bajo sin crear una alerta duplicada.
+    segunda_venta = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "venta",
+            "cantidad": 1,
+        },
+    )
+    assert segunda_venta.status_code == 201, segunda_venta.text
+    assert consultar_stock(client, headers)[1] == 2
+
+    alertas = client.get("/api/alertas", headers=headers)
+    assert alertas.status_code == 200
+    assert len(alertas.json()) == 1
+
+
+def test_recuperar_stock_atiende_alerta(client, headers):
+    venta = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "venta",
+            "cantidad": 7,
+        },
+    )
+    assert venta.status_code == 201, venta.text
+
+    pendientes = client.get("/api/alertas", headers=headers)
+    assert pendientes.status_code == 200
+    assert len(pendientes.json()) == 1
+
+    # Ajuste de prueba: sube de 3 a 5, por encima del umbral.
+    ajuste = client.post(
+        "/api/inventario/movimientos",
+        headers=headers,
+        json={
+            "producto_id": 1,
+            "tipo": "ajuste",
+            "cantidad": 2,
+        },
+    )
+    assert ajuste.status_code == 201, ajuste.text
+    assert consultar_stock(client, headers)[1] == 5
+
+    pendientes = client.get("/api/alertas", headers=headers)
+    assert pendientes.status_code == 200
+    assert pendientes.json() == []
