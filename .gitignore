@@ -10,3 +10,23 @@ modelo/**/*.pt
 .ipynb_checkpoints/
 .DS_Store
 .vscode/
+
+
+# Pesos y modelos entrenados
+backend/weights/*
+!backend/weights/.gitkeep
+*.pt
+*.onnx
+
+# Exportaciones comprimidas
+*.zip
+
+# Salidas de entrenamiento
+runs/
+
+# Configuracion privada
+.env.*
+!.env.example
+
+# Cache de pruebas
+.pytest_cache/
