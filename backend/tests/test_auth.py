@@ -1,5 +1,5 @@
-EMAIL = "tendero@tienda.local"
-PASSWORD = "CambiaEsta123!"
+EMAIL = "pruebas@inventario.local"
+PASSWORD = "PruebasSeguras123!"
 
 
 def login(client, email: str, password: str):
