@@ -2,18 +2,18 @@ import csv
 import hashlib
 import json
 import math
-import random
 import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 DATOS = Path(r"C:\Users\Julia\inventario-vision-datos")
 BASE = DATOS / "dataset_base_v3"
 CSV_ESCENAS = DATOS / "revision_escenas" / "escenas-actualizado-1.csv"
-SALIDA = DATOS / "dataset_entrenamiento" / "v2"
-ZIP = SALIDA.parent / "inventario_vision_v2_para_colab.zip"
+SALIDA = DATOS / "dataset_entrenamiento" / "v3"
+ZIP = SALIDA.parent / "inventario_vision_v3_para_colab.zip"
 
 CLASES = [
     "coca_cola_1_5l", "doritos", "chocoramo", "aceite_ideal",
@@ -21,13 +21,15 @@ CLASES = [
     "cafe_sello_rojo", "colgate_triple_accion", "dogchow_cachorro",
 ]
 SPLITS = ("train", "val", "test")
-PROPORCIONES = (0.70, 0.20, 0.10)
-SEMILLA = 42
-INTENTOS = 12000
+PROPORCIONES = (0.70, 0.15, 0.15)
+MIN_FOTOS_EVAL = 2
+MIN_CAJAS_EVAL = 4
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
 
 def detener(mensaje):
     raise SystemExit(f"\nERROR: {mensaje}")
+
 
 def escribir_csv(ruta, filas, campos):
     with ruta.open("w", newline="", encoding="utf-8-sig") as archivo:
@@ -37,12 +39,13 @@ def escribir_csv(ruta, filas, campos):
         escritor.writeheader()
         escritor.writerows(filas)
 
+
 if not BASE.is_dir() or not CSV_ESCENAS.is_file():
     detener("No se encuentra dataset_base_v3 o el CSV de escenas.")
 
 if SALIDA.exists() or ZIP.exists():
     detener(
-        "La salida v1 o el ZIP ya existen. No se sobrescribira nada. "
+        "La salida v3 o su ZIP ya existen. No se sobrescribira nada. "
         "Revisa una ejecucion anterior antes de continuar."
     )
 
@@ -153,16 +156,19 @@ if any(len(clases) != 1 for clases in clases_escena.values()):
 
 padre = {escena: escena for escena in clases_escena}
 
+
 def raiz(escena):
     while padre[escena] != escena:
         padre[escena] = padre[padre[escena]]
         escena = padre[escena]
     return escena
 
+
 def unir(a, b):
     ra, rb = raiz(a), raiz(b)
     if ra != rb:
         padre[max(ra, rb)] = min(ra, rb)
+
 
 por_hash = defaultdict(list)
 for registro in registros:
@@ -185,7 +191,28 @@ grupos = defaultdict(list)
 for registro in registros:
     grupos[raiz(registro["escena"])].append(registro)
 
-rng = random.Random(SEMILLA)
+# ---------------------------------------------------------------
+# Reparto por busqueda exhaustiva de escenas
+# ---------------------------------------------------------------
+def enumerar_mitad(escenas):
+    k = len(escenas)
+    total = 3 ** k
+    resto = np.arange(total)
+    digitos = np.zeros((total, k), dtype=np.int8)
+    for j in range(k):
+        digitos[:, j] = resto % 3
+        resto //= 3
+    fotos = np.array([e[0] for e in escenas], dtype=float)
+    cajas_e = np.array([e[1] for e in escenas], dtype=float)
+    sumas = np.zeros((total, 6))
+    for s in range(3):
+        mascara = digitos == s
+        sumas[:, s] = mascara @ fotos
+        sumas[:, 3 + s] = mascara @ cajas_e
+    return sumas, digitos
+
+
+objetivo = np.array(PROPORCIONES)
 asignacion = {}
 
 for clase in range(10):
@@ -199,48 +226,56 @@ for clase in range(10):
             "despues de unir duplicados."
         )
 
-        total_imagenes = sum(len(grupos[gid]) for gid in ids)
-
-    cajas_por_grupo = {
-        gid: sum(
-            registro["conteo"][clase]
-            for registro in grupos[gid]
+    escenas = [
+        (
+            len(grupos[gid]),
+            sum(r["conteo"][clase] for r in grupos[gid]),
         )
         for gid in ids
-    }
-    total_cajas = sum(cajas_por_grupo.values())
+    ]
+    total_fotos = sum(e[0] for e in escenas)
+    total_cajas = sum(e[1] for e in escenas)
 
-    mejor = None
+    if total_fotos == 0 or total_cajas == 0:
+        detener(f"{CLASES[clase]} no tiene datos suficientes para repartir.")
+
+    mitad = len(escenas) // 2
+    sumas_a, dig_a = enumerar_mitad(escenas[:mitad])
+    sumas_b, dig_b = enumerar_mitad(escenas[mitad:])
+
     mejor_puntaje = float("inf")
+    mejor_combinacion = None
 
-    for _ in range(INTENTOS):
-        orden = ids[:]
-        rng.shuffle(orden)
-
-        propuesta = {
-            orden[0]: "train",
-            orden[1]: "val",
-            orden[2]: "test",
-        }
-        for gid in orden[3:]:
-            propuesta[gid] = rng.choices(
-                SPLITS, weights=PROPORCIONES, k=1
-            )[0]
-
-        cantidades = Counter()
-        for gid, split in propuesta.items():
-            cantidades[split] += len(grupos[gid])
-
-        puntaje = sum(
-            (cantidades[split] / total_imagenes - objetivo) ** 2
-            for split, objetivo in zip(SPLITS, PROPORCIONES)
+    for inicio in range(0, len(sumas_a), 200):
+        total = sumas_a[inicio:inicio + 200, None, :] + sumas_b[None, :, :]
+        prop_fotos = total[:, :, 0:3] / total_fotos
+        prop_cajas = total[:, :, 3:6] / total_cajas
+        error = (
+            0.5 * ((prop_fotos - objetivo) ** 2).sum(axis=2)
+            + 0.5 * ((prop_cajas - objetivo) ** 2).sum(axis=2)
         )
-        if puntaje < mejor_puntaje:
-            mejor_puntaje = puntaje
-            mejor = propuesta
+        invalido = (
+            (total[:, :, 0] < 1)
+            | (total[:, :, 1] < MIN_FOTOS_EVAL)
+            | (total[:, :, 2] < MIN_FOTOS_EVAL)
+            | (total[:, :, 4] < MIN_CAJAS_EVAL)
+            | (total[:, :, 5] < MIN_CAJAS_EVAL)
+        )
+        error = np.where(invalido, np.inf, error)
+        pos = np.unravel_index(np.argmin(error), error.shape)
+        if error[pos] < mejor_puntaje:
+            mejor_puntaje = error[pos]
+            mejor_combinacion = np.concatenate(
+                [dig_a[inicio + pos[0]], dig_b[pos[1]]]
+            )
 
-    asignacion.update(mejor)
+    if mejor_combinacion is None:
+        detener(f"No hay reparto valido para {CLASES[clase]}.")
 
+    for gid, indice in zip(ids, mejor_combinacion):
+        asignacion[gid] = SPLITS[int(indice)]
+
+# ---------------------------------------------------------------
 cajas = {split: Counter() for split in SPLITS}
 manifest = []
 for registro in registros:
@@ -309,8 +344,15 @@ configuracion = [
 )
 
 informe = {
-    "semilla": SEMILLA,
+    "metodo": (
+        "busqueda exhaustiva de asignaciones de escenas por clase; "
+        "error = 50% proporcion de imagenes + 50% proporcion de cajas"
+    ),
     "proporciones_objetivo": dict(zip(SPLITS, PROPORCIONES)),
+    "minimos_evaluacion": {
+        "fotos_por_clase": MIN_FOTOS_EVAL,
+        "cajas_por_clase": MIN_CAJAS_EVAL,
+    },
     "imagenes": len(registros),
     "escenas_originales": len(clases_escena),
     "grupos_reparto": len(grupos),
