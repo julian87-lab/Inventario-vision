@@ -1,11 +1,13 @@
 import logging
 from collections import defaultdict
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
-from PIL import Image, UnidentifiedImageError
+from fastapi.concurrency import run_in_threadpool
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
@@ -15,6 +17,7 @@ from ..inference import Detector, StubDetector
 from ..models import Deteccion, DeteccionItem, Movimiento, Producto
 from ..schemas.deteccion import ConfirmarDeteccion
 from .alerta_service import sincronizar_alerta_producto
+
 
 
 logger = logging.getLogger(__name__)
@@ -27,8 +30,20 @@ ALLOWED_FORMATS = {
 }
 
 
+@lru_cache
+def _crear_detector_yolo() -> Detector:
+    # Importación diferida: no carga ultralytics si se usa el detector stub.
+    from ..inference.yolo_detector import YoloDetector
+
+    return YoloDetector(
+        model_path=settings.yolo_model_path,
+        confianza=settings.yolo_confidence,
+    )
+
+
 def get_detector() -> Detector:
-    """Detector de prueba. Se reemplazará por YoloDetector al integrar el modelo."""
+    if settings.detector == "yolo":
+        return _crear_detector_yolo()
     return StubDetector()
 
 
@@ -60,11 +75,35 @@ async def guardar_imagen(file: UploadFile) -> tuple[Path, str]:
             detail="El archivo no es una imagen válida compatible.",
         ) from exc
 
+    if image_format == "MPO":
+        try:
+            with Image.open(BytesIO(contents)) as image:
+                image.seek(0)
+                imagen_rgb = ImageOps.exif_transpose(image).convert("RGB")
+
+                with BytesIO() as buffer:
+                    imagen_rgb.save(buffer, format="JPEG", quality=95)
+                    contents = buffer.getvalue()
+
+            image_format = "JPEG"
+
+        except (
+            UnidentifiedImageError,
+            OSError,
+            EOFError,
+            ValueError,
+            Image.DecompressionBombError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail="No se pudo convertir la imagen MPO a JPEG.",
+            ) from exc
+
     extension = ALLOWED_FORMATS.get(image_format or "")
     if extension is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Formato no permitido. Usa JPEG, PNG o WebP.",
+            detail=f"Formato detectado: {image_format!r}. Permitidos: JPEG, PNG o WebP.",
         )
 
     filename = f"{uuid4().hex}{extension}"
@@ -83,7 +122,7 @@ async def crear_deteccion(
 
     try:
         detector = get_detector()
-        resultados = detector.detectar(str(image_path))
+        resultados = await run_in_threadpool(detector.detectar, str(image_path))
 
         confianzas_por_clase: dict[int, list[float]] = defaultdict(list)
 
