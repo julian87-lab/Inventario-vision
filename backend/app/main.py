@@ -1,8 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
-from pathlib import Path
 
-from fastapi.staticfiles import StaticFiles
 
 from .deps import DbSession
 from .routers import alertas, auth, detecciones, inventario, productos
@@ -21,9 +19,7 @@ app.include_router(inventario.router, prefix="/api")
 app.include_router(alertas.router, prefix="/api")
 app.include_router(detecciones.router, prefix="/api")
 
-upload_dir = Path("backend/uploads")
-upload_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
+
 
 @app.get("/health")
 def health() -> dict[str, str]:

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 
+import { getToken } from "@/api/client"
+
 import { useAuth } from "@/auth/context"
 import { Button } from "@/components/ui/button"
 import { ApiError, api, subirDeteccion } from "@/api/client"
@@ -78,6 +80,69 @@ async function prepararImagenParaSubida(file: File): Promise<File> {
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
+}
+
+
+function FotoDeteccion({ deteccionId }: { deteccionId: number }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let objectUrl: string | null = null
+
+    async function cargar() {
+      try {
+        const token = getToken()
+        const response = await fetch(
+          `/api/detecciones/${deteccionId}/imagen`,
+          {
+            headers: token
+              ? { Authorization: `Bearer ${token}` }
+              : undefined,
+            signal: controller.signal,
+          },
+        )
+
+        if (!response.ok) {
+          throw new Error("No se pudo cargar la foto.")
+        }
+
+        const blob = await response.blob()
+        objectUrl = URL.createObjectURL(blob)
+        setSrc(objectUrl)
+      } catch {
+        if (!controller.signal.aborted) {
+          setError(true)
+        }
+      }
+    }
+
+    void cargar()
+
+    return () => {
+      controller.abort()
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [deteccionId])
+
+  if (error) {
+    return <p className="text-sm text-muted-foreground">No se pudo cargar la foto.</p>
+  }
+
+  if (!src) {
+    return <p className="text-sm text-muted-foreground">Cargando foto…</p>
+  }
+
+  return (
+    <img
+      src={src}
+      alt={`Foto de la recepción ${deteccionId}`}
+      className="max-h-80 rounded-md border object-contain"
+    />
+  )
 }
 
 
@@ -492,14 +557,7 @@ export default function Inventario() {
                     </p>
                   </div>
 
-                  <a
-                    className="text-sm underline"
-                    href={deteccion.imagen_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Abrir foto original
-                  </a>
+                <FotoDeteccion deteccionId={deteccion.id} />
                 </div>
 
                 <div className="space-y-3">

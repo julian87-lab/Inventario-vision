@@ -1,7 +1,18 @@
-from fastapi import APIRouter, File, Query, UploadFile, status
+from pathlib import Path
 
+from fastapi import (
+    APIRouter,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi.responses import FileResponse
+
+from ..config import settings
 from ..deps import CurrentUser, DbSession
-from ..models import Deteccion
+from ..models import Deteccion 
 from ..schemas.deteccion import (
     ConfirmarDeteccion,
     DescartarDeteccion,
@@ -55,6 +66,35 @@ async def obtener_deteccion_por_id(
     usuario: CurrentUser,
 ) -> Deteccion:
     return await obtener_deteccion(db, deteccion_id)
+
+
+@router.get("/{deteccion_id}/imagen")
+async def obtener_imagen_deteccion(
+    deteccion_id: int,
+    db: DbSession,
+    usuario: CurrentUser,
+) -> FileResponse:
+    deteccion = await obtener_deteccion(db, deteccion_id)
+
+    # No revelar las imágenes de otros usuarios.
+    if deteccion.usuario_id != usuario.id:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró esa detección.",
+        )
+
+    nombre_archivo = Path(deteccion.imagen_url).name
+    ruta_imagen = Path(settings.upload_dir) / nombre_archivo
+
+    if not ruta_imagen.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró el archivo de imagen.",
+        )
+
+    return FileResponse(ruta_imagen)
+
+
 
 
 @router.post(
