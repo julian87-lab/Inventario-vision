@@ -15,7 +15,7 @@ PRODUCTOS = [
     (0, "Coca-Cola botella 1.5 L", 24, 6),
     (1, "Doritos clásicos x 34 g", 15, 5),
     (2, "Chocoramo ponqué x 55 g", 16, 6),
-    (3, "Aceite vegetal Premier botella x 1 L", 18, 5),
+    (3, "Aceite vegetal Ideal botella x 1 L", 18, 5),
     (4, "Leche Alquería entera bolsa x 1100 ml", 20, 6),
     (5, "Detergente Fab polvo bolsa x 500 g", 24, 6),
     (6, "Harina P.A.N. x 1000 g", 15, 4),
