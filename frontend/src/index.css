@@ -128,3 +128,69 @@
     @apply font-sans;
     }
 }
+
+
+/* Identidad visual de Inventario Visión */
+:root {
+  --background: #f5f7fa;
+  --foreground: #17212b;
+  --card: #ffffff;
+  --card-foreground: #17212b;
+  --popover: #ffffff;
+  --popover-foreground: #17212b;
+  --primary: #0e7490;
+  --primary-foreground: #ffffff;
+  --secondary: #e8edf2;
+  --secondary-foreground: #17212b;
+  --muted: #edf1f5;
+  --muted-foreground: #526171;
+  --accent: #e0f2f6;
+  --accent-foreground: #155e75;
+  --border: #dce3eb;
+  --input: #cbd5e1;
+  --ring: #0e7490;
+  --radius: 0.875rem;
+}
+
+.dark {
+  --background: #0c1118;
+  --foreground: #e8edf3;
+  --card: #131c27;
+  --card-foreground: #e8edf3;
+  --popover: #131c27;
+  --popover-foreground: #e8edf3;
+  --primary: #67e8f9;
+  --primary-foreground: #083344;
+  --secondary: #1d2938;
+  --secondary-foreground: #e8edf3;
+  --muted: #1a2533;
+  --muted-foreground: #a9b7c8;
+  --accent: #163341;
+  --accent-foreground: #a5f3fc;
+  --border: #293749;
+  --input: #35465c;
+  --ring: #67e8f9;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  min-width: 320px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
