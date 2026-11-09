@@ -5,8 +5,11 @@ import type { Usuario } from "@/types/api"
 export interface AuthContextValue {
   user: Usuario | null
   loading: boolean
+  aviso: string | null
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => void
+  limpiarAviso: () => void
+  actualizarUsuario: (usuario: Usuario) => void
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
@@ -18,3 +21,4 @@ export function useAuth(): AuthContextValue {
   }
   return value
 }
+  

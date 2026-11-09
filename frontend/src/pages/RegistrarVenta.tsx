@@ -4,6 +4,7 @@ import { Minus, Plus, Search } from "lucide-react"
 
 import { registrarMovimiento } from "@/api/operaciones"
 import type { TipoMovimiento } from "@/api/operaciones"
+import { useAuth } from "@/auth/context"
 import { Button } from "@/components/ui/button"
 import type { Operaciones } from "@/hooks/useOperaciones"
 import {
@@ -18,13 +19,20 @@ export default function RegistrarVenta({
 }: {
   operaciones: Operaciones
 }) {
+  const { user } = useAuth()
   const { productos, ocupado, escribir, setError, setMensaje } = operaciones
 
+  // Solo el administrador puede registrar ajustes. El servidor también
+  // lo exige; aquí evitamos ofrecer una acción que sería rechazada.
+  const puedeAjustar = user?.rol === "administrador"
+
   const [productoId, setProductoId] = useState("")
-  const [tipo, setTipo] = useState<TipoMovimiento>("venta")
+  const [tipoElegido, setTipoElegido] = useState<TipoMovimiento>("venta")
   const [cantidad, setCantidad] = useState("")
   const [busquedaProducto, setBusquedaProducto] = useState("")
   const [guardando, setGuardando] = useState(false)
+
+  const tipo: TipoMovimiento = puedeAjustar ? tipoElegido : "venta"
 
   useEffect(() => {
     setProductoId((actual) =>
@@ -55,8 +63,15 @@ export default function RegistrarVenta({
         (tipo === "venta" ? -unidadesMovimiento : unidadesMovimiento)
       : null
 
+  const opcionesTipo = (
+    [
+      { id: "venta", nombre: "Venta", detalle: "Resta unidades" },
+      { id: "ajuste", nombre: "Ajuste", detalle: "Suma o resta" },
+    ] as const
+  ).filter((opcion) => opcion.id === "venta" || puedeAjustar)
+
   function cambiarTipo(nuevo: TipoMovimiento) {
-    setTipo(nuevo)
+    setTipoElegido(nuevo)
     if (nuevo === "venta" && Number(cantidad) < 0) setCantidad("")
   }
 
@@ -121,7 +136,9 @@ export default function RegistrarVenta({
         disabled={ocupado}
         className="grid min-w-0 gap-6 lg:grid-cols-[1.2fr_1fr]"
       >
-        <legend className="sr-only">Registrar venta o ajuste</legend>
+        <legend className="sr-only">
+          {puedeAjustar ? "Registrar venta o ajuste" : "Registrar venta"}
+        </legend>
 
         <section className="min-w-0 space-y-4 rounded-2xl border border-border bg-card p-5">
           <div>
@@ -208,46 +225,55 @@ export default function RegistrarVenta({
 
         <section className="min-w-0 space-y-5 rounded-2xl border border-border bg-card p-5 lg:self-start">
           <div>
-            <h2 className="text-lg font-semibold">2. Indica el movimiento</h2>
+            <h2 className="text-lg font-semibold">
+              2. Indica {puedeAjustar ? "el movimiento" : "la venta"}
+            </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Las recepciones de mercancía se registran desde su pestaña.
+              {!puedeAjustar &&
+                " Los ajustes de inventario los realiza un administrador."}
             </p>
           </div>
 
-          <fieldset className="grid min-w-0 grid-cols-2 gap-2 rounded-2xl bg-muted p-1.5">
-            <legend className="sr-only">Tipo de movimiento</legend>
-            {(
-              [
-                { id: "venta", nombre: "Venta", detalle: "Resta unidades" },
-                { id: "ajuste", nombre: "Ajuste", detalle: "Suma o resta" },
-              ] as const
-            ).map((opcion) => (
-              <label key={opcion.id} className="cursor-pointer">
-                <input
-                  type="radio"
-                  name="tipo-movimiento"
-                  value={opcion.id}
-                  checked={tipo === opcion.id}
-                  onChange={() => cambiarTipo(opcion.id)}
-                  className="peer sr-only"
-                />
-                <span
-                  className={`block rounded-xl px-3 py-3 transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-primary ${
-                    tipo === opcion.id
-                      ? "bg-card shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <span className="block text-sm font-semibold">
-                    {opcion.nombre}
+          {puedeAjustar ? (
+            <fieldset className="grid min-w-0 grid-cols-2 gap-2 rounded-2xl bg-muted p-1.5">
+              <legend className="sr-only">Tipo de movimiento</legend>
+              {opcionesTipo.map((opcion) => (
+                <label key={opcion.id} className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="tipo-movimiento"
+                    value={opcion.id}
+                    checked={tipo === opcion.id}
+                    onChange={() => cambiarTipo(opcion.id)}
+                    className="peer sr-only"
+                  />
+                  <span
+                    className={`block rounded-xl px-3 py-3 transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-primary ${
+                      tipo === opcion.id
+                        ? "bg-card shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {opcion.nombre}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {opcion.detalle}
+                    </span>
                   </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {opcion.detalle}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+                </label>
+              ))}
+            </fieldset>
+          ) : (
+            <p className="rounded-xl bg-muted px-4 py-3 text-sm">
+              <span className="font-semibold">Venta</span>
+              <span className="text-muted-foreground">
+                {" "}
+                · Resta unidades del inventario
+              </span>
+            </p>
+          )}
 
           <div className="grid gap-1.5">
             <label
@@ -344,11 +370,14 @@ export default function RegistrarVenta({
               stockResultante < 0
             }
           >
-            {guardando ? "Guardando…" : "Registrar movimiento"}
+            {guardando
+              ? "Guardando…"
+              : puedeAjustar
+                ? "Registrar movimiento"
+                : "Registrar venta"}
           </Button>
         </section>
       </fieldset>
     </form>
   )
 }
-

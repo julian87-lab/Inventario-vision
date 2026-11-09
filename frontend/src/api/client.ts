@@ -3,21 +3,19 @@ import type { Deteccion, Token, Usuario } from "@/types/api"
 
 const TOKEN_KEY = "token"
 
+export const SESION_VENCIDA_EVENTO = "inventario:sesion-vencida"
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
-
 export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token)
 }
 
-
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
-
 
 export class ApiError extends Error {
   status: number
@@ -28,7 +26,6 @@ export class ApiError extends Error {
     this.status = status
   }
 }
-
 
 async function request<T>(
   path: string,
@@ -60,6 +57,10 @@ async function request<T>(
 
     if (response.status === 401) {
       clearToken()
+
+      if (token && !path.startsWith("/auth/login")) {
+        window.dispatchEvent(new Event(SESION_VENCIDA_EVENTO))
+      }
     }
 
     throw new ApiError(response.status, detail)
@@ -67,7 +68,6 @@ async function request<T>(
 
   return (await response.json()) as T
 }
-
 
 export const api = {
   get<T>(path: string): Promise<T> {
@@ -90,7 +90,24 @@ export const api = {
       headers,
     })
   },
+
+
+    patch<T>(path: string, body?: string): Promise<T> {
+    const headers = new Headers()
+    headers.set("Content-Type", "application/json")
+
+    return request<T>(path, {
+      method: "PATCH",
+      body,
+      headers,
+    })
+  },
+
+
+  
 }
+
+
 
 
 export async function login(
@@ -108,11 +125,9 @@ export async function login(
   return data
 }
 
-
 export function getMe(): Promise<Usuario> {
   return api.get<Usuario>("/auth/me")
 }
-
 
 export function subirDeteccion(file: File): Promise<Deteccion> {
   const formData = new FormData()
@@ -121,3 +136,11 @@ export function subirDeteccion(file: File): Promise<Deteccion> {
   return api.post<Deteccion>("/detecciones", formData)
 }
 
+
+
+export function actualizarPerfil(nombre: string): Promise<Usuario> {
+  return api.patch<Usuario>(
+    "/auth/me",
+    JSON.stringify({ nombre }),
+  )
+}

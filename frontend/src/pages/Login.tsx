@@ -1,61 +1,23 @@
 import { useState } from "react"
 import type { FormEvent, KeyboardEvent } from "react"
-import { Navigate } from "react-router-dom"
+import { Link, Navigate } from "react-router-dom"
 import {
-  Boxes,
-  Camera,
   CircleAlert,
-  ClipboardCheck,
   Eye,
   EyeOff,
+  Info,
   LoaderCircle,
-  ScanLine,
 } from "lucide-react"
 
 import { ApiError } from "@/api/client"
 import { useAuth } from "@/auth/context"
+import { AuthLayout } from "@/components/auth/AuthLayout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-const PASOS = [
-  {
-    icono: Camera,
-    titulo: "Fotografía",
-    texto: "Toma una foto de la mercancía que llegó.",
-  },
-  {
-    icono: ClipboardCheck,
-    titulo: "Revisa",
-    texto: "Corrige las cantidades si hace falta.",
-  },
-  {
-    icono: Boxes,
-    titulo: "Confirma",
-    texto: "El stock cambia solo cuando tú lo apruebas.",
-  },
-]
-
-function Marca() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground lg:bg-primary-foreground lg:text-primary">
-        <ScanLine className="size-6" aria-hidden="true" />
-      </span>
-      <span>
-        <span className="block text-base font-semibold tracking-tight">
-          Inventario Visión
-        </span>
-        <span className="block text-xs opacity-80">
-          Gestión de mercancía
-        </span>
-      </span>
-    </div>
-  )
-}
-
 export default function Login() {
-  const { user, signIn } = useAuth()
+  const { user, aviso, signIn } = useAuth()
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -68,12 +30,15 @@ export default function Login() {
     return <Navigate to="/inicio" replace />
   }
 
-  function detectarMayusculas(event: KeyboardEvent<HTMLInputElement>) {
+  function detectarMayusculas(
+    event: KeyboardEvent<HTMLInputElement>,
+  ) {
     setMayusculas(event.getModifierState("CapsLock"))
   }
 
   async function enviar(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
     if (enviando) return
 
     setError(null)
@@ -93,157 +58,192 @@ export default function Login() {
   }
 
   return (
-    <div className="grid min-h-dvh bg-background text-foreground lg:grid-cols-[1.1fr_1fr]">
-      <aside className="relative hidden overflow-hidden bg-primary p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between">
-        <div
-          aria-hidden="true"
-          className="absolute inset-x-0 top-0 h-3 bg-[repeating-linear-gradient(90deg,#fbbf24_0_28px,transparent_28px_56px)]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute -right-24 -bottom-24 size-96 rounded-full bg-primary-foreground/10"
-        />
-
-        <Marca />
-
-        <div className="relative max-w-lg">
-          <h1 className="text-5xl leading-tight font-semibold tracking-tight">
-            Tu inventario, a la vista.
-          </h1>
-          <p className="mt-5 text-lg leading-8 opacity-90">
-            Recibe mercancía con una fotografía y mantén tus existencias al
-            día, sin contar producto por producto.
-          </p>
-
-          <ol className="mt-10 space-y-5">
-            {PASOS.map(({ icono: Icono, titulo, texto }, indice) => (
-              <li key={titulo} className="flex items-start gap-4">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary-foreground/15">
-                  <Icono className="size-5" aria-hidden="true" />
-                </span>
-                <span>
-                  <span className="block font-medium">
-                    {indice + 1}. {titulo}
-                  </span>
-                  <span className="block text-sm opacity-90">{texto}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        <p className="relative text-sm opacity-90">
-          Detección con revisión humana · Proyecto académico
+    <AuthLayout>
+      <header>
+        <p className="text-xs font-medium tracking-wide text-primary uppercase">
+          Acceso a tu tienda
         </p>
-      </aside>
 
-      <main className="flex items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-md space-y-8">
-          <div className="lg:hidden">
-            <Marca />
+        <h1
+          id="titulo-auth"
+          className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl"
+        >
+          Bienvenido de nuevo
+        </h1>
+
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Ingresa para gestionar tu mercancía.
+        </p>
+      </header>
+
+      {aviso && (
+        <p
+          role="status"
+          className="mt-5 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+        >
+          <Info
+            className="mt-0.5 size-4 shrink-0"
+            aria-hidden="true"
+          />
+          <span>{aviso}</span>
+        </p>
+      )}
+
+      <form
+        onSubmit={enviar}
+        aria-busy={enviando}
+        className="mt-6"
+      >
+        <fieldset
+          disabled={enviando}
+          className="min-w-0 space-y-5"
+        >
+          <legend className="sr-only">
+            Iniciar sesión
+          </legend>
+
+          <div className="grid gap-2">
+            <Label htmlFor="correo">
+              Correo electrónico
+            </Label>
+
+            <Input
+              id="correo"
+              name="email"
+              type="email"
+              inputMode="email"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={255}
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              aria-invalid={error !== null}
+              aria-describedby={
+                error ? "error-login" : undefined
+              }
+              className="h-12 rounded-xl bg-background text-base"
+            />
           </div>
 
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight">
-              Bienvenido de nuevo
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Ingresa para gestionar tu mercancía.
-            </p>
-          </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="contrasena">
+                Contraseña
+              </Label>
 
-          <form onSubmit={enviar} className="space-y-5">
-            <fieldset disabled={enviando} className="min-w-0 space-y-5">
-              <legend className="sr-only">Iniciar sesión</legend>
+              <Link
+                to="/recuperar-contrasena"
+                className="rounded text-xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="correo">Correo</Label>
-                <Input
-                  id="correo"
-                  type="email"
-                  inputMode="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  aria-invalid={error !== null}
-                  aria-describedby={error ? "error-login" : undefined}
-                  className="h-11 rounded-xl"
-                />
-              </div>
+            <div className="relative">
+              <Input
+                id="contrasena"
+                name="password"
+                type={mostrar ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
+                onKeyDown={detectarMayusculas}
+                onKeyUp={detectarMayusculas}
+                onBlur={() => setMayusculas(false)}
+                aria-invalid={error !== null}
+                aria-describedby={
+                  [
+                    error ? "error-login" : "",
+                    mayusculas ? "aviso-mayusculas" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
+                className="h-12 rounded-xl bg-background pr-12 text-base"
+              />
 
-              <div className="grid gap-2">
-                <Label htmlFor="contrasena">Contraseña</Label>
-                <div className="relative">
-                  <Input
-                    id="contrasena"
-                    type={mostrar ? "text" : "password"}
-                    autoComplete="current-password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    onKeyDown={detectarMayusculas}
-                    onKeyUp={detectarMayusculas}
-                    onBlur={() => setMayusculas(false)}
-                    aria-invalid={error !== null}
-                    aria-describedby={error ? "error-login" : undefined}
-                    className="h-11 rounded-xl pr-12"
-                  />
-                  <button
-                    type="button"
-                    aria-label={
-                      mostrar ? "Ocultar contraseña" : "Mostrar contraseña"
-                    }
-                    aria-pressed={mostrar}
-                    onClick={() => setMostrar((valor) => !valor)}
-                    className="absolute top-1 right-1 inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    {mostrar ? (
-                      <EyeOff className="size-4" aria-hidden="true" />
-                    ) : (
-                      <Eye className="size-4" aria-hidden="true" />
-                    )}
-                  </button>
-                </div>
-
-                {mayusculas && (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    Tienes activado el bloqueo de mayúsculas.
-                  </p>
-                )}
-              </div>
-
-              {error && (
-                <p
-                  id="error-login"
-                  role="alert"
-                  className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-                >
-                  <CircleAlert
-                    className="mt-0.5 size-4 shrink-0"
+              <button
+                type="button"
+                aria-label={
+                  mostrar
+                    ? "Ocultar contraseña"
+                    : "Mostrar contraseña"
+                }
+                aria-pressed={mostrar}
+                aria-controls="contrasena"
+                onClick={() =>
+                  setMostrar((valor) => !valor)
+                }
+                className="absolute top-0.5 right-0.5 inline-flex size-11 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                {mostrar ? (
+                  <EyeOff
+                    className="size-4"
                     aria-hidden="true"
                   />
-                  {error}
-                </p>
-              )}
-
-              <Button type="submit" className="min-h-12 w-full">
-                {enviando ? (
-                  <>
-                    <LoaderCircle
-                      className="mr-2 size-4 motion-safe:animate-spin"
-                      aria-hidden="true"
-                    />
-                    Ingresando…
-                  </>
                 ) : (
-                  "Ingresar"
+                  <Eye
+                    className="size-4"
+                    aria-hidden="true"
+                  />
                 )}
-              </Button>
-            </fieldset>
-          </form>
-        </div>
-      </main>
-    </div>
+              </button>
+            </div>
+
+            {mayusculas && (
+              <p
+                id="aviso-mayusculas"
+                role="status"
+                className="text-xs text-muted-foreground"
+              >
+                Tienes activado el bloqueo de mayúsculas.
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <p
+              id="error-login"
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              <CircleAlert
+                className="mt-0.5 size-4 shrink-0"
+                aria-hidden="true"
+              />
+              <span>{error}</span>
+            </p>
+          )}
+
+          <Button
+            type="submit"
+            className="min-h-12 w-full rounded-xl text-base"
+          >
+            {enviando ? (
+              <>
+                <LoaderCircle
+                  className="mr-2 size-4 motion-safe:animate-spin"
+                  aria-hidden="true"
+                />
+                Ingresando…
+              </>
+            ) : (
+              "Ingresar"
+            )}
+          </Button>
+        </fieldset>
+      </form>
+
+      <p className="mt-6 text-xs leading-5 text-muted-foreground">
+        El registro es por invitación. Si necesitas una cuenta,
+        solicítala al administrador de la tienda y abre el enlace
+        que recibirás por correo.
+      </p>
+    </AuthLayout>
   )
 }

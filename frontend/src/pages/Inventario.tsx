@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { RefreshCw } from "lucide-react"
 
+import { useAuth } from "@/auth/context"
 import { Button } from "@/components/ui/button"
 import { useOperaciones } from "@/hooks/useOperaciones"
 import Alertas from "@/pages/Alertas"
@@ -9,11 +10,20 @@ import Historial from "@/pages/Historial"
 import RegistrarVenta from "@/pages/RegistrarVenta"
 import SubirFoto from "@/pages/SubirFoto"
 
-type PestañaOperacion = "recepcion" | "movimientos" | "alertas" | "historial"
+type PestañaOperacion =
+  | "recepcion"
+  | "movimientos"
+  | "alertas"
+  | "historial"
 
 export default function Inventario() {
+  const { user } = useAuth()
   const operaciones = useOperaciones()
-  const [pestaña, setPestaña] = useState<PestañaOperacion>("recepcion")
+
+  const [pestaña, setPestaña] =
+    useState<PestañaOperacion>("recepcion")
+
+  const puedeAjustar = user?.rol === "administrador"
 
   const {
     pendientes,
@@ -37,9 +47,19 @@ export default function Inventario() {
       nombre: "Recibir mercancía",
       contador: pendientes.length,
     },
-    { id: "movimientos", nombre: "Ventas y ajustes" },
-    { id: "alertas", nombre: "Alertas", contador: alertas.length },
-    { id: "historial", nombre: "Historial" },
+    {
+      id: "movimientos",
+      nombre: puedeAjustar ? "Ventas y ajustes" : "Ventas",
+    },
+    {
+      id: "alertas",
+      nombre: "Alertas",
+      contador: alertas.length,
+    },
+    {
+      id: "historial",
+      nombre: "Historial",
+    },
   ]
 
   function cambiarPestaña(nueva: PestañaOperacion) {
@@ -54,16 +74,19 @@ export default function Inventario() {
           <p className="text-sm font-medium text-primary">
             Gestión de mercancía
           </p>
+
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
             Operaciones
           </h1>
+
           <p className="mt-2 text-sm text-muted-foreground">
-            Recibe mercancía, registra salidas y consulta la actividad del
-            inventario.
+            Recibe mercancía, registra salidas y consulta la actividad
+            del inventario.
           </p>
         </div>
 
         <Button
+          type="button"
           variant="outline"
           disabled={ocupado}
           onClick={() => {
@@ -77,6 +100,7 @@ export default function Inventario() {
             }`}
             aria-hidden="true"
           />
+
           {cargando ? "Actualizando…" : "Actualizar datos"}
         </Button>
       </header>
@@ -89,7 +113,9 @@ export default function Inventario() {
           <button
             key={opcion.id}
             type="button"
-            aria-current={pestaña === opcion.id ? "page" : undefined}
+            aria-current={
+              pestaña === opcion.id ? "page" : undefined
+            }
             onClick={() => cambiarPestaña(opcion.id)}
             className={`inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:flex-none ${
               pestaña === opcion.id
@@ -98,23 +124,28 @@ export default function Inventario() {
             }`}
           >
             {opcion.nombre}
-            {opcion.contador !== undefined && opcion.contador > 0 && (
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs tabular-nums ${
-                  pestaña === opcion.id
-                    ? "bg-primary-foreground/20"
-                    : "bg-primary/10 text-primary"
-                }`}
-              >
-                {opcion.contador}
-              </span>
-            )}
+
+            {opcion.contador !== undefined &&
+              opcion.contador > 0 && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs tabular-nums ${
+                    pestaña === opcion.id
+                      ? "bg-primary-foreground/20"
+                      : "bg-primary/10 text-primary"
+                  }`}
+                >
+                  {opcion.contador}
+                </span>
+              )}
           </button>
         ))}
       </nav>
 
       {cargando && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p
+          role="status"
+          className="text-sm text-muted-foreground"
+        >
           Actualizando datos de operaciones…
         </p>
       )}
@@ -137,7 +168,10 @@ export default function Inventario() {
         </p>
       )}
 
-      <div hidden={pestaña !== "recepcion"} className="space-y-6">
+      <div
+        hidden={pestaña !== "recepcion"}
+        className="space-y-6"
+      >
         <SubirFoto operaciones={operaciones} />
         <ConfirmarDeteccion operaciones={operaciones} />
       </div>

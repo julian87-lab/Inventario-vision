@@ -29,4 +29,5 @@ runs/
 !.env.example
 
 # Cache de pruebas
-.pytest_cache/
+.pytest_cache/*.sql
+*.sql

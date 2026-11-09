@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession
-from ..models import Deteccion 
+from ..models import Deteccion
 from ..schemas.deteccion import (
     ConfirmarDeteccion,
     DescartarDeteccion,
@@ -56,7 +56,7 @@ async def obtener_detecciones(
     usuario: CurrentUser,
     limite: int = Query(default=100, ge=1, le=500),
 ) -> list[Deteccion]:
-    return await listar_detecciones(db, limite)
+    return await listar_detecciones(db, limite, usuario)
 
 
 @router.get("/{deteccion_id}", response_model=DeteccionRead)
@@ -65,7 +65,7 @@ async def obtener_deteccion_por_id(
     db: DbSession,
     usuario: CurrentUser,
 ) -> Deteccion:
-    return await obtener_deteccion(db, deteccion_id)
+    return await obtener_deteccion(db, deteccion_id, usuario)
 
 
 @router.get("/{deteccion_id}/imagen")
@@ -74,14 +74,8 @@ async def obtener_imagen_deteccion(
     db: DbSession,
     usuario: CurrentUser,
 ) -> FileResponse:
-    deteccion = await obtener_deteccion(db, deteccion_id)
-
-    # No revelar las imágenes de otros usuarios.
-    if deteccion.usuario_id != usuario.id:
-        raise HTTPException(
-            status_code=404,
-            detail="No se encontró esa detección.",
-        )
+    # El mismo alcance que la detección: operador, la suya; administrador, todas.
+    deteccion = await obtener_deteccion(db, deteccion_id, usuario)
 
     nombre_archivo = Path(deteccion.imagen_url).name
     ruta_imagen = Path(settings.upload_dir) / nombre_archivo
@@ -93,8 +87,6 @@ async def obtener_imagen_deteccion(
         )
 
     return FileResponse(ruta_imagen)
-
-
 
 
 @router.post(
@@ -111,7 +103,7 @@ async def confirmar(
         db=db,
         deteccion_id=deteccion_id,
         datos=datos,
-        usuario_id=usuario.id,
+        usuario=usuario,
     )
 
 
@@ -125,4 +117,4 @@ async def descartar(
     db: DbSession,
     usuario: CurrentUser,
 ) -> Deteccion:
-    return await descartar_deteccion(db, deteccion_id)
+    return await descartar_deteccion(db, deteccion_id, usuario)

@@ -3,10 +3,13 @@ export interface Token {
   token_type: string
 }
 
+export type Rol = "administrador" | "operador"
+
 export interface Usuario {
   id: number
   nombre: string
   email: string
+  rol: Rol
 }
 
 export type Producto = {
@@ -58,4 +61,43 @@ export type Deteccion = {
   modelo_version: string
   estado: EstadoDeteccion
   items: DeteccionItem[]
+}
+
+
+export type InvitacionInfo = {
+  email: string
+  rol: Rol
+}
+
+export type UsuarioAdmin = {
+  id: number
+  nombre: string
+  email: string
+  rol: Rol
+  activo: boolean
+  creado_en: string
+}
+
+export type EstadoInvitacion = "pendiente" | "usada" | "revocada" | "vencida"
+
+export type Invitacion = {
+  id: number
+  email: string
+  rol: Rol
+  estado: EstadoInvitacion
+  creada_por_id: number
+  creada_en: string
+  expira_en: string
+  usada_en: string | null
+  revocada_en: string | null
+}
+
+export type EventoAuditoria = {
+  id: number
+  usuario_id: number | null
+  accion: string
+  objeto_tipo: string
+  objeto_id: number | null
+  detalle: string | null
+  fecha_hora: string
 }

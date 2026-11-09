@@ -5,6 +5,8 @@ import { Package, RefreshCw, Search } from "lucide-react"
 import { api, ApiError } from "@/api/client"
 import { useAuth } from "@/auth/context"
 import type { Producto } from "@/types/api"
+import { ProductoImagen } from "@/components/ProductoImagen"
+
 
 type Filtro = "todos" | "disponible" | "bajo" | "agotado"
 
@@ -262,33 +264,39 @@ export default function Catalogo() {
 
                 return (
                   <li
-                    key={producto.id}
-                    className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <h3 className="font-medium">{producto.nombre}</h3>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Umbral de alerta: {producto.umbral_alerta} unidades
-                      </p>
-                    </div>
+  key={producto.id}
+  className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-4 gap-y-2 p-4 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:gap-x-5 sm:p-5"
+>
+  <div className="row-span-2 self-center sm:row-span-1">
+    <ProductoImagen claseYolo={producto.clase_yolo} />
+  </div>
 
-                    <div className="flex items-center justify-between gap-5 sm:justify-end">
-                      <div className="text-right">
-                        <p className="text-2xl font-semibold tabular-nums">
-                          {producto.stock_actual.toLocaleString("es-CO")}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          unidades
-                        </p>
-                      </div>
+  <div className="min-w-0">
+    <h3 className="text-sm leading-6 font-medium sm:text-base">
+      {producto.nombre}
+    </h3>
+    <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+      Umbral de alerta: {producto.umbral_alerta} unidades
+    </p>
+  </div>
 
-                      <span
-                        className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${estado.estilo}`}
-                      >
-                        {estado.texto}
-                      </span>
-                    </div>
-                  </li>
+  <div className="col-start-2 flex flex-wrap items-center gap-x-4 gap-y-2 sm:col-start-auto sm:justify-end sm:gap-5">
+    <div className="flex items-baseline gap-1.5 sm:block sm:text-right">
+      <p className="text-2xl font-semibold tabular-nums">
+        {producto.stock_actual.toLocaleString("es-CO")}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        unidades
+      </p>
+    </div>
+
+    <span
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${estado.estilo}`}
+    >
+      {estado.texto}
+    </span>
+  </div>
+</li>
                 )
               })}
             </ul>

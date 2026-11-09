@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from ..deps import CurrentUser, DbSession
 from ..models import Movimiento
@@ -25,6 +25,12 @@ async def crear_movimiento(
     db: DbSession,
     usuario: CurrentUser,
 ) -> Movimiento:
+    if datos.tipo == "ajuste" and usuario.rol != "administrador":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede registrar ajustes de inventario.",
+        )
+
     return await registrar_movimiento(
         db=db,
         datos=datos,

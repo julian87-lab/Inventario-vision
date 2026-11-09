@@ -14,15 +14,20 @@ from sqlalchemy.orm import selectinload
 
 from ..config import settings
 from ..inference import Detector, StubDetector
-from ..models import Deteccion, DeteccionItem, Movimiento, Producto
+from ..models import (
+    Deteccion,
+    DeteccionItem,
+    Movimiento,
+    Producto,
+    Usuario,
+)
 from ..schemas.deteccion import ConfirmarDeteccion
 from .alerta_service import sincronizar_alerta_producto
-
-
 
 logger = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
 ALLOWED_FORMATS = {
     "JPEG": ".jpg",
     "PNG": ".png",
@@ -32,7 +37,6 @@ ALLOWED_FORMATS = {
 
 @lru_cache
 def _crear_detector_yolo() -> Detector:
-    # Importación diferida: no carga ultralytics si se usa el detector stub.
     from ..inference.yolo_detector import YoloDetector
 
     return YoloDetector(
@@ -44,7 +48,36 @@ def _crear_detector_yolo() -> Detector:
 def get_detector() -> Detector:
     if settings.detector == "yolo":
         return _crear_detector_yolo()
+
     return StubDetector()
+
+
+def _aplicar_alcance(consulta, usuario: Usuario):
+    if not usuario.activo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu cuenta está desactivada.",
+        )
+
+    if usuario.rol == "administrador":
+        return consulta
+
+    if usuario.rol == "operador":
+        return consulta.where(Deteccion.usuario_id == usuario.id)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="No tienes permiso para gestionar detecciones.",
+    )
+
+
+def _eliminar_imagen_si_existe(ruta: Path) -> None:
+    try:
+        ruta.unlink(missing_ok=True)
+    except OSError:
+        logger.exception(
+            "No se pudo eliminar una imagen tras fallar la detección"
+        )
 
 
 async def guardar_imagen(file: UploadFile) -> tuple[Path, str]:
@@ -69,7 +102,14 @@ async def guardar_imagen(file: UploadFile) -> tuple[Path, str]:
         with Image.open(BytesIO(contents)) as image:
             image_format = image.format
             image.verify()
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+
+    except (
+        UnidentifiedImageError,
+        OSError,
+        EOFError,
+        ValueError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="El archivo no es una imagen válida compatible.",
@@ -82,7 +122,11 @@ async def guardar_imagen(file: UploadFile) -> tuple[Path, str]:
                 imagen_rgb = ImageOps.exif_transpose(image).convert("RGB")
 
                 with BytesIO() as buffer:
-                    imagen_rgb.save(buffer, format="JPEG", quality=95)
+                    imagen_rgb.save(
+                        buffer,
+                        format="JPEG",
+                        quality=95,
+                    )
                     contents = buffer.getvalue()
 
             image_format = "JPEG"
@@ -100,15 +144,28 @@ async def guardar_imagen(file: UploadFile) -> tuple[Path, str]:
             ) from exc
 
     extension = ALLOWED_FORMATS.get(image_format or "")
+
     if extension is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Formato detectado: {image_format!r}. Permitidos: JPEG, PNG o WebP.",
+            detail=(
+                f"Formato detectado: {image_format!r}. "
+                "Permitidos: JPEG, PNG o WebP."
+            ),
         )
 
     filename = f"{uuid4().hex}{extension}"
     destination = upload_dir / filename
-    destination.write_bytes(contents)
+
+    try:
+        await run_in_threadpool(destination.write_bytes, contents)
+    except OSError as exc:
+        _eliminar_imagen_si_existe(destination)
+        logger.exception("No se pudo guardar la imagen")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo guardar la imagen.",
+        ) from exc
 
     return destination, f"/uploads/{filename}"
 
@@ -119,10 +176,14 @@ async def crear_deteccion(
     usuario_id: int,
 ) -> Deteccion:
     image_path, image_url = await guardar_imagen(file)
+    guardada_en_bd = False
 
     try:
-        detector = get_detector()
-        resultados = await run_in_threadpool(detector.detectar, str(image_path))
+        detector = await run_in_threadpool(get_detector)
+        resultados = await run_in_threadpool(
+            detector.detectar,
+            str(image_path),
+        )
 
         confianzas_por_clase: dict[int, list[float]] = defaultdict(list)
 
@@ -136,8 +197,8 @@ async def crear_deteccion(
                 )
 
         clases = list(confianzas_por_clase)
-
         productos_por_clase: dict[int, Producto] = {}
+
         if clases:
             query_productos = await db.execute(
                 select(Producto).where(
@@ -145,6 +206,7 @@ async def crear_deteccion(
                     Producto.activo.is_(True),
                 )
             )
+
             productos_por_clase = {
                 producto.clase_yolo: producto
                 for producto in query_productos.scalars().all()
@@ -158,19 +220,18 @@ async def crear_deteccion(
         )
         db.add(deteccion)
 
-        # Obtiene el ID de la detección antes de crear los ítems.
         await db.flush()
+        deteccion_id = deteccion.id
 
-        # Insertamos por clave foránea; no accedemos a deteccion.items,
-        # porque esa relación aún podría estar descargada de forma lazy.
         for clase_yolo, confianzas in confianzas_por_clase.items():
             producto = productos_por_clase.get(clase_yolo)
+
             if producto is None:
                 continue
 
             db.add(
                 DeteccionItem(
-                    deteccion_id=deteccion.id,
+                    deteccion_id=deteccion_id,
                     producto_id=producto.id,
                     cantidad_detectada=len(confianzas),
                     confianza=sum(confianzas) / len(confianzas),
@@ -179,35 +240,51 @@ async def crear_deteccion(
             )
 
         await db.commit()
+        guardada_en_bd = True
 
-        # Carga explícitamente los ítems antes de serializar la respuesta.
         query_deteccion = await db.execute(
             select(Deteccion)
             .options(selectinload(Deteccion.items))
-            .where(Deteccion.id == deteccion.id)
+            .where(Deteccion.id == deteccion_id)
         )
+
         return query_deteccion.scalar_one()
 
     except HTTPException:
         await db.rollback()
-        image_path.unlink(missing_ok=True)
+
+        if not guardada_en_bd:
+            _eliminar_imagen_si_existe(image_path)
+
         raise
+
     except Exception as exc:
         await db.rollback()
-        image_path.unlink(missing_ok=True)
+
+        if not guardada_en_bd:
+            _eliminar_imagen_si_existe(image_path)
+
         logger.exception("Error al crear la detección")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo procesar la imagen para detección.",
         ) from exc
 
 
-async def obtener_deteccion(db, deteccion_id: int) -> Deteccion:
-    resultado = await db.execute(
+async def obtener_deteccion(
+    db,
+    deteccion_id: int,
+    usuario: Usuario,
+) -> Deteccion:
+    consulta = (
         select(Deteccion)
         .options(selectinload(Deteccion.items))
         .where(Deteccion.id == deteccion_id)
     )
+    consulta = _aplicar_alcance(consulta, usuario)
+
+    resultado = await db.execute(consulta)
     deteccion = resultado.scalar_one_or_none()
 
     if deteccion is None:
@@ -219,26 +296,38 @@ async def obtener_deteccion(db, deteccion_id: int) -> Deteccion:
     return deteccion
 
 
-async def listar_detecciones(db, limite: int = 100) -> list[Deteccion]:
-    resultado = await db.execute(
-        select(Deteccion)
-        .options(selectinload(Deteccion.items))
-        .order_by(Deteccion.fecha_hora.desc())
-        .limit(limite)
+async def listar_detecciones(
+    db,
+    limite: int,
+    usuario: Usuario,
+) -> list[Deteccion]:
+    consulta = select(Deteccion).options(
+        selectinload(Deteccion.items)
     )
+    consulta = _aplicar_alcance(consulta, usuario)
+    consulta = consulta.order_by(
+        Deteccion.fecha_hora.desc(),
+        Deteccion.id.desc(),
+    ).limit(limite)
+
+    resultado = await db.execute(consulta)
     return list(resultado.scalars().all())
 
 
 async def _cargar_deteccion_para_actualizar(
     db,
     deteccion_id: int,
+    usuario: Usuario,
 ) -> Deteccion:
-    resultado = await db.execute(
+    consulta = (
         select(Deteccion)
         .options(selectinload(Deteccion.items))
         .where(Deteccion.id == deteccion_id)
-        .with_for_update()
     )
+    consulta = _aplicar_alcance(consulta, usuario)
+    consulta = consulta.with_for_update()
+
+    resultado = await db.execute(consulta)
     deteccion = resultado.scalar_one_or_none()
 
     if deteccion is None:
@@ -260,10 +349,14 @@ async def confirmar_deteccion(
     db,
     deteccion_id: int,
     datos: ConfirmarDeteccion,
-    usuario_id: int,
+    usuario: Usuario,
 ) -> Deteccion:
     try:
-        deteccion = await _cargar_deteccion_para_actualizar(db, deteccion_id)
+        deteccion = await _cargar_deteccion_para_actualizar(
+            db,
+            deteccion_id,
+            usuario,
+        )
 
         items_por_producto = {
             item.producto_id: item
@@ -271,6 +364,7 @@ async def confirmar_deteccion(
         }
 
         confirmaciones: dict[int, int] = {}
+
         for item_confirmado in datos.items:
             producto_id = item_confirmado.producto_id
 
@@ -289,7 +383,9 @@ async def confirmar_deteccion(
                     detail="No repitas productos en la confirmación.",
                 )
 
-            confirmaciones[producto_id] = item_confirmado.cantidad_confirmada
+            confirmaciones[producto_id] = (
+                item_confirmado.cantidad_confirmada
+            )
 
         ids_productos = list(items_por_producto)
         productos: dict[int, Producto] = {}
@@ -304,6 +400,7 @@ async def confirmar_deteccion(
                 .order_by(Producto.id)
                 .with_for_update()
             )
+
             productos = {
                 producto.id: producto
                 for producto in resultado_productos.scalars().all()
@@ -317,10 +414,13 @@ async def confirmar_deteccion(
                 continue
 
             producto = productos.get(item.producto_id)
+
             if producto is None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Un producto de la detección ya no está activo.",
+                    detail=(
+                        "Un producto de la detección ya no está activo."
+                    ),
                 )
 
             stock_antes = producto.stock_actual
@@ -330,7 +430,7 @@ async def confirmar_deteccion(
             db.add(
                 Movimiento(
                     producto_id=producto.id,
-                    usuario_id=usuario_id,
+                    usuario_id=usuario.id,
                     deteccion_id=deteccion.id,
                     tipo="entrada_deteccion",
                     cantidad=cantidad,
@@ -344,35 +444,61 @@ async def confirmar_deteccion(
         deteccion.estado = "confirmada"
         await db.commit()
 
-        return await obtener_deteccion(db, deteccion.id)
+        return await obtener_deteccion(
+            db,
+            deteccion_id,
+            usuario,
+        )
 
     except HTTPException:
         await db.rollback()
         raise
+
     except SQLAlchemyError as exc:
         await db.rollback()
-        logger.exception("Error de base de datos al confirmar la detección")
+        logger.exception(
+            "Error de base de datos al confirmar la detección"
+        )
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo confirmar la detección.",
         ) from exc
 
 
-async def descartar_deteccion(db, deteccion_id: int) -> Deteccion:
+async def descartar_deteccion(
+    db,
+    deteccion_id: int,
+    usuario: Usuario,
+) -> Deteccion:
     try:
-        deteccion = await _cargar_deteccion_para_actualizar(db, deteccion_id)
+        deteccion = await _cargar_deteccion_para_actualizar(
+            db,
+            deteccion_id,
+            usuario,
+        )
+
         deteccion.estado = "descartada"
         await db.commit()
 
-        return await obtener_deteccion(db, deteccion.id)
+        return await obtener_deteccion(
+            db,
+            deteccion_id,
+            usuario,
+        )
 
     except HTTPException:
         await db.rollback()
         raise
+
     except SQLAlchemyError as exc:
         await db.rollback()
-        logger.exception("Error de base de datos al descartar la detección")
+        logger.exception(
+            "Error de base de datos al descartar la detección"
+        )
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo descartar la detección.",
         ) from exc
+    
