@@ -1,0 +1,29 @@
+name: inventario-restore
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inventario
+      POSTGRES_PASSWORD: ${RESTORE_TEST_PASSWORD:?Define RESTORE_TEST_PASSWORD en PowerShell}
+      POSTGRES_DB: inventario
+    volumes:
+      - restore_postgres_data:/var/lib/postgresql/data
+      - restore_uploads:/restore-uploads
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventario -d inventario"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - restore
+
+networks:
+  restore:
+    internal: true
+
+volumes:
+  restore_postgres_data:
+  restore_uploads:
+  
