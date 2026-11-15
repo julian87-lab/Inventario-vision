@@ -1,0 +1,39 @@
+{$SITE_ADDRESS:http://localhost} {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+
+    request_body {
+        max_size 12MB
+    }
+
+    @api path /api /api/*
+    handle @api {
+        reverse_proxy api:8000
+    }
+
+    @health path /health /health/*
+    handle @health {
+        respond "Not found" 404
+    }
+
+    @privado path /uploads /uploads/* /docs /docs/* /redoc /redoc/* /openapi.json
+    handle @privado {
+        respond "Not found" 404
+    }
+
+    handle {
+        root * /srv
+
+        route {
+            try_files {path} /index.html
+            header /index.html Cache-Control "no-cache"
+            file_server
+        }
+    }
+}

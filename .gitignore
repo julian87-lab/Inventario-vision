@@ -31,3 +31,10 @@ runs/
 # Cache de pruebas
 .pytest_cache/*.sql
 *.sql
+
+
+# Respaldos locales: contienen datos privados
+/backups/
+
+
+!.env.deploy.example
