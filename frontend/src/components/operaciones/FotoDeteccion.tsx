@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react"
 
-import { getToken } from "@/api/client"
+import {
+  clearToken,
+  getToken,
+  SESION_VENCIDA_EVENTO,
+} from "@/api/client"
 
 export function FotoDeteccion({ deteccionId }: { deteccionId: number }) {
   const [src, setSrc] = useState<string | null>(null)
@@ -16,25 +20,49 @@ export function FotoDeteccion({ deteccionId }: { deteccionId: number }) {
     async function cargar() {
       try {
         const token = getToken()
+
+        if (!token) {
+          throw new Error("No hay una sesión disponible.")
+        }
+
         const response = await fetch(
           `/api/detecciones/${deteccionId}/imagen`,
           {
-            headers: token
-              ? { Authorization: `Bearer ${token}` }
-              : undefined,
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            cache: "no-store",
             signal: controller.signal,
           },
         )
 
-        if (!response.ok) throw new Error("No se pudo cargar la foto.")
+        if (controller.signal.aborted) return
+
+        if (response.status === 401) {
+          // No elimina una sesión nueva si esta petición pertenece
+          // a un token anterior.
+          if (getToken() === token) {
+            clearToken()
+            window.dispatchEvent(new Event(SESION_VENCIDA_EVENTO))
+          }
+
+          throw new Error("La sesión ya no es válida.")
+        }
+
+        if (!response.ok) {
+          throw new Error("No se pudo cargar la foto.")
+        }
 
         const blob = await response.blob()
+
         if (controller.signal.aborted) return
 
         objectUrl = URL.createObjectURL(blob)
         setSrc(objectUrl)
       } catch {
-        if (!controller.signal.aborted) setError(true)
+        if (!controller.signal.aborted) {
+          setError(true)
+        }
       }
     }
 
@@ -42,7 +70,10 @@ export function FotoDeteccion({ deteccionId }: { deteccionId: number }) {
 
     return () => {
       controller.abort()
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
     }
   }, [deteccionId])
 

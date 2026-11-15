@@ -1,6 +1,10 @@
 import { useState } from "react"
 
-import { confirmarRecepcion, descartarRecepcion } from "@/api/operaciones"
+import {
+  agregarProductoManual,
+  confirmarRecepcion,
+  descartarRecepcion,
+} from "@/api/operaciones"
 import { DialogoRecepcion } from "@/components/operaciones/DialogoRecepcion"
 import type { AccionRecepcion } from "@/components/operaciones/DialogoRecepcion"
 import { TarjetaRecepcion } from "@/components/operaciones/TarjetaRecepcion"
@@ -20,6 +24,7 @@ export default function ConfirmarDeteccion({
 }) {
   const {
     pendientes,
+    productos,
     datosDisponibles,
     cargando,
     ocupado,
@@ -49,6 +54,37 @@ export default function ConfirmarDeteccion({
         [productoId]: valor,
       },
     }))
+  }
+
+  async function agregarProducto(
+    deteccion: Deteccion,
+    productoId: number,
+    cantidad: number,
+  ) {
+    setError(null)
+    setMensaje(null)
+
+    const resultado = await escribir(
+      () =>
+        agregarProductoManual(deteccion.id, {
+          producto_id: productoId,
+          cantidad,
+        }),
+      () => {
+        setMensaje(
+          `Producto añadido manualmente a la recepción #${deteccion.id}. Confirma la recepción para actualizar el inventario.`,
+        )
+      },
+    )
+
+    if (resultado.estado === "error") {
+      setError(
+        mensajeError(
+          resultado.error,
+          "No se pudo añadir el producto a la recepción.",
+        ),
+      )
+    }
   }
 
   function prepararConfirmacion(deteccion: Deteccion) {
@@ -157,11 +193,15 @@ export default function ConfirmarDeteccion({
           <TarjetaRecepcion
             key={deteccion.id}
             deteccion={deteccion}
+            productos={productos}
             ediciones={cantidadesEditadas[deteccion.id]}
             nombreProducto={nombreProducto}
             ocupado={ocupado}
             onCambiarCantidad={(productoId, valor) =>
               cambiarCantidad(deteccion.id, productoId, valor)
+            }
+            onAgregarProducto={(productoId, cantidad) =>
+              void agregarProducto(deteccion, productoId, cantidad)
             }
             onRevisar={() => prepararConfirmacion(deteccion)}
             onDescartar={() => {

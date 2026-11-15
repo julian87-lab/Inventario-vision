@@ -21,8 +21,9 @@ from ..models import (
     Producto,
     Usuario,
 )
-from ..schemas.deteccion import ConfirmarDeteccion
+from ..schemas.deteccion import AgregarItemDeteccion, ConfirmarDeteccion
 from .alerta_service import sincronizar_alerta_producto
+from .auditoria_service import registrar_evento
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +346,81 @@ async def _cargar_deteccion_para_actualizar(
     return deteccion
 
 
+async def agregar_item_manual(
+    db,
+    deteccion_id: int,
+    datos: AgregarItemDeteccion,
+    usuario: Usuario,
+) -> Deteccion:
+    try:
+        deteccion = await _cargar_deteccion_para_actualizar(
+            db,
+            deteccion_id,
+            usuario,
+        )
+
+        producto = await db.get(Producto, datos.producto_id)
+
+        if producto is None or not producto.activo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selecciona un producto activo.",
+            )
+
+        if any(
+            item.producto_id == producto.id
+            for item in deteccion.items
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ese producto ya está incluido en esta recepción.",
+            )
+
+        deteccion.items.append(
+            DeteccionItem(
+                producto_id=producto.id,
+                cantidad_detectada=datos.cantidad,
+                confianza=None,
+                cantidad_confirmada=None,
+            )
+        )
+
+        registrar_evento(
+            db,
+            usuario.id,
+            "producto_manual_agregado",
+            "deteccion",
+            deteccion.id,
+            (
+                f"producto: {producto.nombre}; "
+                f"cantidad: {datos.cantidad}; origen: corrección manual"
+            ),
+        )
+
+        await db.commit()
+
+        return await obtener_deteccion(
+            db,
+            deteccion_id,
+            usuario,
+        )
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        logger.exception(
+            "Error de base de datos al añadir un producto manual"
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo añadir el producto a la recepción.",
+        ) from exc
+
+
 async def confirmar_deteccion(
     db,
     deteccion_id: int,
@@ -501,4 +577,3 @@ async def descartar_deteccion(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo descartar la detección.",
         ) from exc
-    

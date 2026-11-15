@@ -7,9 +7,15 @@ import {
   type ReactNode,
 } from "react"
 
-import { api, ApiError, getMe, login } from "@/api/client"
-import { limpiarSesion } from "@/auth/storage"
+import {
+  ApiError,
+  getMe,
+  getToken,
+  login,
+  SESION_VENCIDA_EVENTO,
+} from "@/api/client"
 import { AuthContext } from "@/auth/context"
+import { limpiarSesion } from "@/auth/storage"
 import type { Usuario } from "@/types/api"
 
 export function AuthProvider({
@@ -37,6 +43,26 @@ export function AuthProvider({
     setUser(usuario)
   }, [])
 
+  useEffect(() => {
+    function manejarSesionVencida() {
+      limpiarSesion()
+      setUser(null)
+      setAviso("Tu sesión venció. Inicia sesión para continuar.")
+    }
+
+    window.addEventListener(
+      SESION_VENCIDA_EVENTO,
+      manejarSesionVencida,
+    )
+
+    return () => {
+      window.removeEventListener(
+        SESION_VENCIDA_EVENTO,
+        manejarSesionVencida,
+      )
+    }
+  }, [])
+
   const signIn = useCallback(
     async (email: string, password: string): Promise<void> => {
       if (bloqueo.current) return
@@ -50,7 +76,11 @@ export function AuthProvider({
         const usuario = await getMe()
 
         setUser(usuario)
+        setAviso(null)
       } catch (error) {
+        limpiarSesion()
+        setUser(null)
+
         if (error instanceof ApiError) {
           if (error.status === 401) {
             throw new Error(
@@ -79,18 +109,41 @@ export function AuthProvider({
 
   useEffect(() => {
     let activo = true
+    const tokenInicial = getToken()
 
     async function restaurarSesion() {
-      try {
-        const usuario = await api.get<Usuario>("/auth/me")
-
+      if (!tokenInicial) {
         if (activo) {
+          setUser(null)
+          setLoading(false)
+        }
+
+        return
+      }
+
+      try {
+        const usuario = await getMe()
+
+        if (activo && getToken() === tokenInicial) {
           setUser(usuario)
         }
-      } catch {
-        if (activo) {
-          limpiarSesion()
-          setUser(null)
+      } catch (error) {
+        if (!activo) return
+
+        const tokenActual = getToken()
+
+        // No modifica una sesión nueva que haya sustituido a la
+        // sesión que se estaba restaurando.
+        if (tokenActual !== tokenInicial && tokenActual !== null) {
+          return
+        }
+
+        setUser(null)
+
+        if (error instanceof ApiError && error.status === 401) {
+          if (tokenActual === tokenInicial) {
+            limpiarSesion()
+          }
         }
       } finally {
         if (activo) {

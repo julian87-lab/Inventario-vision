@@ -31,6 +31,11 @@ class DeteccionItemConfirmacion(BaseModel):
     cantidad_confirmada: int = Field(ge=0)
 
 
+class AgregarItemDeteccion(BaseModel):
+    producto_id: int = Field(gt=0)
+    cantidad: int = Field(ge=1)
+
+
 class ConfirmarDeteccion(BaseModel):
     items: list[DeteccionItemConfirmacion] = Field(min_length=1)
 

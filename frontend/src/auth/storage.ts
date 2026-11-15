@@ -1,13 +1,13 @@
-const CLAVE_TOKEN = "token"
+import { clearToken, getToken, setToken } from "@/api/client"
 
 export function guardarSesion(token: string): void {
-  localStorage.setItem(CLAVE_TOKEN, token)
+  setToken(token)
 }
 
 export function limpiarSesion(): void {
-  localStorage.removeItem(CLAVE_TOKEN)
+  clearToken()
 }
 
 export function obtenerToken(): string | null {
-  return localStorage.getItem(CLAVE_TOKEN)
+  return getToken()
 }

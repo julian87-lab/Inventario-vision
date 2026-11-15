@@ -13,6 +13,11 @@ export type ItemConfirmado = {
   cantidad_confirmada: number
 }
 
+export type ItemManual = {
+  producto_id: number
+  cantidad: number
+}
+
 export type DatosOperaciones = {
   productos: Producto[]
   movimientos: Movimiento[]
@@ -48,6 +53,16 @@ export async function obtenerDatosOperaciones(): Promise<DatosOperaciones> {
 
 export function analizarRecepcion(archivo: File): Promise<Deteccion> {
   return subirDeteccion(archivo)
+}
+
+export function agregarProductoManual(
+  deteccionId: number,
+  item: ItemManual,
+): Promise<Deteccion> {
+  return api.post<Deteccion>(
+    `/detecciones/${deteccionId}/items`,
+    JSON.stringify(item),
+  )
 }
 
 export function confirmarRecepcion(

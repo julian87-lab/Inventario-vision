@@ -1,4 +1,5 @@
-import { Check, ClipboardCheck, ShieldCheck } from "lucide-react"
+import { useState } from "react"
+import { Check, ClipboardCheck, Plus, ShieldCheck } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { FotoDeteccion } from "@/components/operaciones/FotoDeteccion"
@@ -9,25 +10,32 @@ import {
   enteroNoNegativo,
   formatearFecha,
 } from "@/lib/inventario"
-import type { Deteccion } from "@/types/api"
+import type { Deteccion, Producto } from "@/types/api"
 
 export function TarjetaRecepcion({
   deteccion,
+  productos,
   ediciones,
   nombreProducto,
   ocupado,
   onCambiarCantidad,
+  onAgregarProducto,
   onRevisar,
   onDescartar,
 }: {
   deteccion: Deteccion
+  productos: Producto[]
   ediciones: Record<number, string> | undefined
   nombreProducto: (id: number) => string
   ocupado: boolean
   onCambiarCantidad: (productoId: number, valor: string) => void
+  onAgregarProducto: (productoId: number, cantidad: number) => void
   onRevisar: () => void
   onDescartar: () => void
 }) {
+  const [productoManual, setProductoManual] = useState("")
+  const [cantidadManual, setCantidadManual] = useState("1")
+
   const valorDe = (productoId: number) =>
     cantidadAConfirmar(deteccion, ediciones, productoId)
 
@@ -47,6 +55,26 @@ export function TarjetaRecepcion({
       enteroNoNegativo(valorDe(item.producto_id)) &&
       Number(valorDe(item.producto_id)) > 0,
   ).length
+
+  const productosDisponibles = productos.filter(
+    (producto) =>
+      producto.activo &&
+      !deteccion.items.some((item) => item.producto_id === producto.id),
+  )
+
+  const productoElegido = productosDisponibles.some(
+    (producto) => String(producto.id) === productoManual,
+  )
+    ? productoManual
+    : ""
+
+  const cantidadManualValida =
+    cantidadManual !== "" &&
+    Number.isInteger(Number(cantidadManual)) &&
+    Number(cantidadManual) >= 1
+
+  const puedeAgregar =
+    productoElegido !== "" && cantidadManualValida && !ocupado
 
   return (
     <article className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -87,7 +115,7 @@ export function TarjetaRecepcion({
           {deteccion.items.length === 0 ? (
             <VacioSeccion
               titulo="No se identificaron productos"
-              texto="Descarta esta propuesta y prueba una foto más clara."
+              texto="Puedes añadir manualmente los productos que faltan antes de confirmar."
             />
           ) : (
             <div className="space-y-3">
@@ -96,6 +124,7 @@ export function TarjetaRecepcion({
                 const invalido = !enteroNoNegativo(valor)
                 const editado =
                   !invalido && Number(valor) !== item.cantidad_detectada
+                const manual = item.confianza === null
                 const idCampo = `cantidad-${deteccion.id}-${item.id}`
 
                 return (
@@ -103,16 +132,28 @@ export function TarjetaRecepcion({
                     key={item.id}
                     className="rounded-xl border border-border bg-background p-4"
                   >
-                    <label
-                      htmlFor={idCampo}
-                      className="block text-sm font-medium"
-                    >
-                      {nombreProducto(item.producto_id)}
-                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label
+                        htmlFor={idCampo}
+                        className="block text-sm font-medium"
+                      >
+                        {nombreProducto(item.producto_id)}
+                      </label>
+
+                      {manual && (
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                          Añadido manualmente
+                        </span>
+                      )}
+                    </div>
 
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                       <div className="text-xs text-muted-foreground">
-                        <p>Detectadas: {item.cantidad_detectada}</p>
+                        <p>
+                          {manual
+                            ? `Cantidad indicada: ${item.cantidad_detectada}`
+                            : `Detectadas: ${item.cantidad_detectada}`}
+                        </p>
                         {editado && (
                           <span className="mt-1 inline-flex items-center gap-1 text-primary">
                             <Check className="size-3" aria-hidden="true" />
@@ -195,11 +236,88 @@ export function TarjetaRecepcion({
             </div>
           </div>
 
-          <p className="text-xs leading-5 text-muted-foreground">
-            No puedes añadir aquí un producto que el modelo no detectó. Si
-            falta mercancía, no confirmes una propuesta incompleta: descártala
-            y prueba otra fotografía.
-          </p>
+          <div className="rounded-xl border border-border bg-background p-4">
+            <div className="flex items-center gap-2">
+              <Plus className="size-4 text-primary" aria-hidden="true" />
+              <h4 className="text-sm font-medium">Añadir producto omitido</h4>
+            </div>
+
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Si el modelo no identificó una mercancía visible en la foto,
+              añádela manualmente. Quedará marcada como corrección humana y
+              registrada en auditoría.
+            </p>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
+              <div>
+                <label
+                  htmlFor={`producto-manual-${deteccion.id}`}
+                  className="mb-1 block text-xs text-muted-foreground"
+                >
+                  Producto
+                </label>
+
+                <select
+                  id={`producto-manual-${deteccion.id}`}
+                  className={`${CAMPO} w-full`}
+                  value={productoElegido}
+                  disabled={ocupado || productosDisponibles.length === 0}
+                  onChange={(event) => setProductoManual(event.target.value)}
+                >
+                  <option value="">Selecciona un producto</option>
+
+                  {productosDisponibles.map((producto) => (
+                    <option key={producto.id} value={producto.id}>
+                      {producto.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor={`cantidad-manual-${deteccion.id}`}
+                  className="mb-1 block text-xs text-muted-foreground"
+                >
+                  Cantidad
+                </label>
+
+                <input
+                  id={`cantidad-manual-${deteccion.id}`}
+                  className={`${CAMPO} w-full text-center font-semibold tabular-nums`}
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  disabled={ocupado}
+                  value={cantidadManual}
+                  onChange={(event) => setCantidadManual(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 min-h-11 w-full"
+              disabled={!puedeAgregar}
+              onClick={() =>
+                onAgregarProducto(
+                  Number(productoElegido),
+                  Number(cantidadManual),
+                )
+              }
+            >
+              Añadir a la recepción
+            </Button>
+
+            {productosDisponibles.length === 0 && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Todos los productos activos ya están incluidos en esta
+                recepción.
+              </p>
+            )}
+          </div>
 
           <div className="flex flex-wrap gap-2">
             <Button

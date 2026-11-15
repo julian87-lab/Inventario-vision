@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from sqlalchemy import select
 
@@ -8,7 +9,6 @@ from backend.app.security import hash_password
 
 ADMIN_NOMBRE = "Tendero"
 ADMIN_EMAIL = "tendero@tienda.local"
-ADMIN_PASSWORD = "CambiaEsta123!"  # solo desarrollo
 
 # (clase_yolo, nombre, stock_inicial, umbral_alerta)
 PRODUCTOS = [
@@ -25,15 +25,37 @@ PRODUCTOS = [
 ]
 
 
+def obtener_contrasena_administrador() -> str:
+    contrasena = os.environ.get("ADMIN_PASSWORD", "").strip()
+
+    if not contrasena:
+        raise RuntimeError(
+            "Define ADMIN_PASSWORD en el entorno antes de ejecutar el seed. "
+            "No se permite una contraseña fija en el código."
+        )
+
+    if len(contrasena) < 12:
+        raise RuntimeError(
+            "ADMIN_PASSWORD debe tener al menos 12 caracteres."
+        )
+
+    return contrasena
+
+
 async def main() -> None:
+    contrasena_administrador = obtener_contrasena_administrador()
+
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Usuario).where(Usuario.email == ADMIN_EMAIL))
+        result = await db.execute(
+            select(Usuario).where(Usuario.email == ADMIN_EMAIL)
+        )
         usuario = result.scalar_one_or_none()
+
         if usuario is None:
             usuario = Usuario(
                 nombre=ADMIN_NOMBRE,
                 email=ADMIN_EMAIL,
-                password_hash=hash_password(ADMIN_PASSWORD),
+                password_hash=hash_password(contrasena_administrador),
             )
             db.add(usuario)
             await db.flush()
@@ -43,6 +65,7 @@ async def main() -> None:
                 select(Producto).where(Producto.clase_yolo == clase)
             )
             producto = result.scalar_one_or_none()
+
             if producto is not None:
                 producto.nombre = nombre
                 producto.umbral_alerta = umbral
@@ -56,6 +79,7 @@ async def main() -> None:
             )
             db.add(producto)
             await db.flush()
+
             if stock > 0:
                 db.add(
                     Movimiento(
@@ -69,6 +93,7 @@ async def main() -> None:
                 )
 
         await db.commit()
+
     await engine.dispose()
     print("Seed completado")
 

@@ -14,11 +14,13 @@ from ..config import settings
 from ..deps import CurrentUser, DbSession
 from ..models import Deteccion
 from ..schemas.deteccion import (
+    AgregarItemDeteccion,
     ConfirmarDeteccion,
     DescartarDeteccion,
     DeteccionRead,
 )
 from ..services.deteccion_service import (
+    agregar_item_manual,
     confirmar_deteccion,
     crear_deteccion,
     descartar_deteccion,
@@ -31,6 +33,13 @@ router = APIRouter(
     prefix="/detecciones",
     tags=["detecciones"],
 )
+
+TIPOS_IMAGEN = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
 
 
 @router.post(
@@ -78,15 +87,52 @@ async def obtener_imagen_deteccion(
     deteccion = await obtener_deteccion(db, deteccion_id, usuario)
 
     nombre_archivo = Path(deteccion.imagen_url).name
-    ruta_imagen = Path(settings.upload_dir) / nombre_archivo
+    carpeta_imagenes = Path(settings.upload_dir).resolve()
+    ruta_imagen = (carpeta_imagenes / nombre_archivo).resolve()
 
-    if not ruta_imagen.is_file():
+    if carpeta_imagenes not in ruta_imagen.parents:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="No se encontró el archivo de imagen.",
         )
 
-    return FileResponse(ruta_imagen)
+    if not ruta_imagen.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el archivo de imagen.",
+        )
+
+    media_type = TIPOS_IMAGEN.get(ruta_imagen.suffix.lower())
+
+    if media_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el archivo de imagen.",
+        )
+
+    return FileResponse(
+        ruta_imagen,
+        media_type=media_type,
+    )
+
+
+@router.post(
+    "/{deteccion_id}/items",
+    response_model=DeteccionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def agregar_producto_manual(
+    deteccion_id: int,
+    datos: AgregarItemDeteccion,
+    db: DbSession,
+    usuario: CurrentUser,
+) -> Deteccion:
+    return await agregar_item_manual(
+        db=db,
+        deteccion_id=deteccion_id,
+        datos=datos,
+        usuario=usuario,
+    )
 
 
 @router.post(
