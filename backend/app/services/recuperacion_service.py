@@ -26,23 +26,19 @@ def _hash_token(token: str) -> str:
 
 
 async def solicitar_recuperacion(email: str) -> None:
-    """Procesa la solicitud en segundo plano y registra los errores."""
+    """Procesa la solicitud y coordina las operaciones por usuario."""
     try:
         correo = email.strip().lower()
-        ahora = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as db:
-            await db.execute(
-                delete(PasswordResetToken).where(
-                    PasswordResetToken.expira_en < ahora - timedelta(days=1)
-                )
-            )
-
             resultado = await db.execute(
-                select(Usuario).where(
+                select(Usuario)
+                .where(
                     Usuario.email == correo,
                     Usuario.activo.is_(True),
                 )
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
             usuario = resultado.scalar_one_or_none()
 
@@ -50,21 +46,34 @@ async def solicitar_recuperacion(email: str) -> None:
                 await db.commit()
                 return
 
+            ahora = datetime.now(timezone.utc)
+
+            # Limpia solo los tokens del usuario que tenemos bloqueado.
+            await db.execute(
+                delete(PasswordResetToken).where(
+                    PasswordResetToken.usuario_id == usuario.id,
+                    PasswordResetToken.expira_en
+                    < ahora - timedelta(days=1),
+                )
+            )
+
             recientes = await db.scalar(
                 select(func.count())
                 .select_from(PasswordResetToken)
                 .where(
                     PasswordResetToken.usuario_id == usuario.id,
-                    PasswordResetToken.creado_en > ahora - timedelta(hours=1),
+                    PasswordResetToken.creado_en
+                    > ahora - timedelta(hours=1),
                 )
             )
 
             if (recientes or 0) >= MAX_SOLICITUDES_POR_HORA:
+                usuario_id = usuario.id
                 await db.commit()
                 logger.warning(
                     "Límite de solicitudes de recuperación alcanzado "
                     "para el usuario %s",
-                    usuario.id,
+                    usuario_id,
                 )
                 return
 
@@ -74,6 +83,7 @@ async def solicitar_recuperacion(email: str) -> None:
                 PasswordResetToken(
                     usuario_id=usuario.id,
                     token_hash=_hash_token(token),
+                    creado_en=ahora,
                     expira_en=ahora
                     + timedelta(
                         minutes=settings.password_reset_expire_minutes
@@ -105,34 +115,54 @@ async def restablecer_contrasena(
     nueva_contrasena: str,
 ) -> tuple[str, str]:
     try:
-        ahora = datetime.now(timezone.utc)
+        token_hash = _hash_token(token)
 
-        resultado = await db.execute(
+        # Identifica al usuario sin bloquear todavía el token.
+        usuario_id = await db.scalar(
+            select(PasswordResetToken.usuario_id).where(
+                PasswordResetToken.token_hash == token_hash
+            )
+        )
+
+        if usuario_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ENLACE_NO_VALIDO,
+            )
+
+        # Todas las operaciones de este servicio bloquean primero al usuario.
+        resultado_usuario = await db.execute(
+            select(Usuario)
+            .where(Usuario.id == usuario_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        usuario = resultado_usuario.scalar_one_or_none()
+
+        if usuario is None or not usuario.activo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ENLACE_NO_VALIDO,
+            )
+
+        resultado_token = await db.execute(
             select(PasswordResetToken)
             .where(
-                PasswordResetToken.token_hash == _hash_token(token)
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.usuario_id == usuario.id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        registro = resultado.scalar_one_or_none()
+        registro = resultado_token.scalar_one_or_none()
+
+        ahora = datetime.now(timezone.utc)
 
         if (
             registro is None
             or registro.usado_en is not None
             or registro.expira_en <= ahora
         ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=ENLACE_NO_VALIDO,
-            )
-
-        usuario = await db.get(
-            Usuario,
-            registro.usuario_id,
-            with_for_update=True,
-        )
-
-        if usuario is None or not usuario.activo:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ENLACE_NO_VALIDO,
@@ -182,4 +212,3 @@ async def restablecer_contrasena(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo restablecer la contraseña.",
         ) from exc
-    

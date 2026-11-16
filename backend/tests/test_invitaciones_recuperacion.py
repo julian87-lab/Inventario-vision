@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, text
 
 from backend.app.models import Invitacion, PasswordResetToken
@@ -156,7 +157,11 @@ def entorno_correos(client, monkeypatch):
     return correos
 
 
-def crear_invitacion(client, correos, email="nueva@inventario.local"):
+def crear_invitacion(
+    client,
+    correos,
+    email="nueva@inventario.local",
+):
     respuesta = client.post(
         "/api/admin/invitaciones",
         headers=headers_usuario(1),
@@ -213,13 +218,17 @@ def test_operador_no_accede_a_consultas_administrativas(
         "/api/admin/auditoria",
     ):
         respuesta = client.get(ruta, headers=headers)
+
         assert respuesta.status_code == 403, (
             ruta,
             respuesta.text,
         )
 
 
-def test_invitacion_registro_y_uso_unico(client, entorno_correos):
+def test_invitacion_registro_y_uso_unico(
+    client,
+    entorno_correos,
+):
     correos = entorno_correos
 
     _, token = crear_invitacion(client, correos)
@@ -238,12 +247,14 @@ def test_invitacion_registro_y_uso_unico(client, entorno_correos):
     assert respuesta.status_code == 201, respuesta.text
 
     repetida = registrar(client, token)
+
     assert repetida.status_code == 400, repetida.text
 
     consulta_repetida = client.post(
         "/api/auth/invitacion/consultar",
         json={"token": token},
     )
+
     assert consulta_repetida.status_code == 400
 
     login = client.post(
@@ -287,10 +298,14 @@ def test_invitacion_revocada_no_permite_registro(
     assert revocada.status_code == 200, revocada.text
 
     respuesta = registrar(client, token)
+
     assert respuesta.status_code == 400, respuesta.text
 
 
-def test_reenvio_invalida_token_anterior(client, entorno_correos):
+def test_reenvio_invalida_token_anterior(
+    client,
+    entorno_correos,
+):
     correos = entorno_correos
     invitacion, anterior = crear_invitacion(client, correos)
 
@@ -312,9 +327,11 @@ def test_reenvio_invalida_token_anterior(client, entorno_correos):
         "/api/auth/invitacion/consultar",
         json={"token": anterior},
     )
+
     assert consulta_anterior.status_code == 400
 
     registro_nuevo = registrar(client, nuevo)
+
     assert registro_nuevo.status_code == 201, registro_nuevo.text
 
 
@@ -322,7 +339,10 @@ def test_invitacion_vencida_no_permite_registro(
     client,
     entorno_correos,
 ):
-    _, token = crear_invitacion(client, entorno_correos)
+    _, token = crear_invitacion(
+        client,
+        entorno_correos,
+    )
 
     asyncio.run(vencer_invitacion(token))
 
@@ -330,9 +350,11 @@ def test_invitacion_vencida_no_permite_registro(
         "/api/auth/invitacion/consultar",
         json={"token": token},
     )
+
     assert consulta.status_code == 400, consulta.text
 
     respuesta = registrar(client, token)
+
     assert respuesta.status_code == 400, respuesta.text
 
 
@@ -374,6 +396,7 @@ def test_recuperacion_cambia_clave_invalida_sesion_y_es_unica(
             "password": "PruebasSeguras123!",
         },
     )
+
     assert login_anterior.status_code == 401
 
     login_nuevo = client.post(
@@ -383,6 +406,7 @@ def test_recuperacion_cambia_clave_invalida_sesion_y_es_unica(
             "password": PASSWORD_NUEVA,
         },
     )
+
     assert login_nuevo.status_code == 200, login_nuevo.text
 
     repetida = client.post(
@@ -392,6 +416,7 @@ def test_recuperacion_cambia_clave_invalida_sesion_y_es_unica(
             "password": "OtraContrasenaSegura789!",
         },
     )
+
     assert repetida.status_code == 400, repetida.text
     assert len(correos["avisos"]) == 1
 
@@ -452,4 +477,121 @@ def test_recuperacion_no_revela_si_correo_existe(
         entorno_correos["recuperaciones"][0]["destino"]
         == EMAIL_OPERADOR
     )
+
+
+def test_recuperacion_concurrente_respeta_limite_por_usuario(
+    client,
+    entorno_correos,
+):
+    async def ejecutar():
+        tareas = [
+            recuperacion_service.solicitar_recuperacion(
+                EMAIL_OPERADOR
+            )
+            for _ in range(5)
+        ]
+
+        await asyncio.wait_for(
+            asyncio.gather(*tareas),
+            timeout=30,
+        )
+
+        async with TestSessionLocal() as db:
+            resultado = await db.execute(
+                select(PasswordResetToken).where(
+                    PasswordResetToken.usuario_id == 2
+                )
+            )
+            registros = list(resultado.scalars().all())
+
+            assert len(registros) == 3
+            assert all(
+                registro.usado_en is None
+                for registro in registros
+            )
+
+    asyncio.run(ejecutar())
+
+    assert len(entorno_correos["recuperaciones"]) == 3
+
+
+def test_dos_tokens_concurrentes_solo_permiten_un_restablecimiento(
+    client,
+    entorno_correos,
+):
+    for _ in range(2):
+        respuesta = client.post(
+            "/api/auth/forgot-password",
+            json={"email": EMAIL_OPERADOR},
+        )
+
+        assert respuesta.status_code == 202, respuesta.text
+
+    mensajes = entorno_correos["recuperaciones"]
+
+    assert len(mensajes) == 2
+
+    tokens = [
+        extraer_token(mensaje["enlace"])
+        for mensaje in mensajes
+    ]
+
+    assert tokens[0] != tokens[1]
+
+    async def ejecutar():
+        async def intentar(token):
+            async with TestSessionLocal() as db:
+                try:
+                    await recuperacion_service.restablecer_contrasena(
+                        db,
+                        token,
+                        PASSWORD_NUEVA,
+                    )
+                    return 200
+
+                except HTTPException as exc:
+                    return exc.status_code
+
+        resultados = await asyncio.wait_for(
+            asyncio.gather(
+                intentar(tokens[0]),
+                intentar(tokens[1]),
+            ),
+            timeout=30,
+        )
+
+        assert sorted(resultados) == [200, 400]
+
+        async with TestSessionLocal() as db:
+            resultado = await db.execute(
+                select(PasswordResetToken).where(
+                    PasswordResetToken.usuario_id == 2
+                )
+            )
+            registros = list(resultado.scalars().all())
+
+            assert len(registros) == 2
+            assert all(
+                registro.usado_en is not None
+                for registro in registros
+            )
+
+    asyncio.run(ejecutar())
+
+    login = client.post(
+        "/api/auth/login",
+        data={
+            "username": EMAIL_OPERADOR,
+            "password": PASSWORD_NUEVA,
+        },
+    )
+
+    assert login.status_code == 200, login.text
+
+    sesion_anterior = client.get(
+        "/api/auth/me",
+        headers=headers_usuario(2),
+    )
+
+    assert sesion_anterior.status_code == 401
     

@@ -192,6 +192,8 @@ def aislar_limitadores_autenticacion(monkeypatch):
 
     limites = {
         "_limite_login": (10, 15 * 60),
+        "_limite_login_ip": (50, 15 * 60),
+        "_limite_login_correo": (30, 15 * 60),
         "_limite_solicitud": (10, 15 * 60),
         "_limite_restablecer": (10, 15 * 60),
         "_limite_registro": (10, 15 * 60),

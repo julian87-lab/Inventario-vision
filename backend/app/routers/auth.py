@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..deps import CurrentUser, DbSession
 from ..models import Usuario
 from ..schemas.auth import (
+    ActualizarPerfil,
     CambiarContrasena,
     InvitacionConsulta,
     InvitacionInfo,
@@ -39,22 +40,11 @@ from ..services.recuperacion_service import (
     solicitar_recuperacion,
 )
 
-from ..schemas.auth import (
-    ActualizarPerfil,
-    CambiarContrasena,
-    InvitacionConsulta,
-    InvitacionInfo,
-    MensajeOut,
-    RegistroInvitacion,
-    RestablecerContrasena,
-    SolicitudRecuperacion,
-    Token,
-    UsuarioOut,
-)
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _limite_login = LimitadorVentana(maximo=10, ventana_segundos=15 * 60)
+_limite_login_ip = LimitadorVentana(maximo=50, ventana_segundos=15 * 60)
+_limite_login_correo = LimitadorVentana(maximo=30, ventana_segundos=15 * 60)
 _limite_solicitud = LimitadorVentana(maximo=10, ventana_segundos=15 * 60)
 _limite_restablecer = LimitadorVentana(maximo=10, ventana_segundos=15 * 60)
 _limite_registro = LimitadorVentana(maximo=10, ventana_segundos=15 * 60)
@@ -66,7 +56,7 @@ MENSAJE_SOLICITUD = (
 )
 MENSAJE_LIMITE = "Demasiados intentos. Espera unos minutos e inténtalo de nuevo."
 
-# Hash de relleno: iguala el tiempo de respuesta cuando el correo no existe.
+# Permite comprobar un hash incluso cuando el correo no existe.
 _HASH_FICTICIO = hash_password("contrasena-ficticia-no-valida")
 
 
@@ -90,13 +80,23 @@ async def login(
     db: DbSession,
 ) -> Token:
     correo = form_data.username.strip().lower()
-    _aplicar_limite(_limite_login, f"{_ip_cliente(request)}|{correo}")
+    ip = _ip_cliente(request)
 
-    result = await db.execute(select(Usuario).where(Usuario.email == correo))
+    _aplicar_limite(_limite_login_ip, ip)
+    _aplicar_limite(_limite_login_correo, correo)
+    _aplicar_limite(_limite_login, f"{ip}|{correo}")
+
+    result = await db.execute(
+        select(Usuario).where(Usuario.email == correo)
+    )
     usuario = result.scalar_one_or_none()
 
     hash_a_verificar = usuario.password_hash if usuario else _HASH_FICTICIO
-    contrasena_valida = verify_password(form_data.password, hash_a_verificar)
+    contrasena_valida = await run_in_threadpool(
+        verify_password,
+        form_data.password,
+        hash_a_verificar,
+    )
 
     if usuario is None or not contrasena_valida:
         raise HTTPException(
@@ -112,7 +112,10 @@ async def login(
         )
 
     return Token(
-        access_token=create_access_token(str(usuario.id), usuario.token_version)
+        access_token=create_access_token(
+            str(usuario.id),
+            usuario.token_version,
+        )
     )
 
 
@@ -164,7 +167,6 @@ async def actualizar_mi_perfil(
         ) from exc
 
 
-
 @router.post(
     "/forgot-password",
     response_model=MensajeOut,
@@ -191,9 +193,15 @@ async def restablecer_contrasena_endpoint(
     _aplicar_limite(_limite_restablecer, _ip_cliente(request))
 
     destino, nombre = await restablecer_contrasena(
-        db, datos.token, datos.password
+        db,
+        datos.token,
+        datos.password,
     )
-    segundo_plano.add_task(enviar_aviso_cambio_contrasena, destino, nombre)
+    segundo_plano.add_task(
+        enviar_aviso_cambio_contrasena,
+        destino,
+        nombre,
+    )
 
     return MensajeOut(
         mensaje="Tu contraseña se actualizó. Ya puedes iniciar sesión."
@@ -209,7 +217,10 @@ async def consultar_invitacion_endpoint(
     _aplicar_limite(_limite_registro, _ip_cliente(request))
 
     invitacion = await consultar_invitacion(db, datos.token)
-    return InvitacionInfo(email=invitacion.email, rol=invitacion.rol)
+    return InvitacionInfo(
+        email=invitacion.email,
+        rol=invitacion.rol,
+    )
 
 
 @router.post(
@@ -224,8 +235,16 @@ async def registrar(
 ) -> MensajeOut:
     _aplicar_limite(_limite_registro, _ip_cliente(request))
 
-    await registrar_con_invitacion(db, datos.token, datos.nombre, datos.password)
-    return MensajeOut(mensaje="Tu cuenta fue creada. Ya puedes iniciar sesión.")
+    await registrar_con_invitacion(
+        db,
+        datos.token,
+        datos.nombre,
+        datos.password,
+    )
+
+    return MensajeOut(
+        mensaje="Tu cuenta fue creada. Ya puedes iniciar sesión."
+    )
 
 
 @router.post("/change-password", response_model=Token)
@@ -237,7 +256,13 @@ async def cambiar_contrasena(
 ) -> Token:
     _aplicar_limite(_limite_cambio, str(current_user.id))
 
-    if not verify_password(datos.actual, current_user.password_hash):
+    contrasena_actual_valida = await run_in_threadpool(
+        verify_password,
+        datos.actual,
+        current_user.password_hash,
+    )
+
+    if not contrasena_actual_valida:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La contraseña actual no es correcta.",
@@ -251,9 +276,11 @@ async def cambiar_contrasena(
 
     try:
         current_user.password_hash = await run_in_threadpool(
-            hash_password, datos.nueva
+            hash_password,
+            datos.nueva,
         )
         current_user.token_version += 1
+
         registrar_evento(
             db,
             current_user.id,
@@ -261,7 +288,9 @@ async def cambiar_contrasena(
             "usuario",
             current_user.id,
         )
+
         await db.commit()
+
     except SQLAlchemyError as exc:
         await db.rollback()
         raise HTTPException(
@@ -270,12 +299,15 @@ async def cambiar_contrasena(
         ) from exc
 
     segundo_plano.add_task(
-        enviar_aviso_cambio_contrasena, current_user.email, current_user.nombre
+        enviar_aviso_cambio_contrasena,
+        current_user.email,
+        current_user.nombre,
     )
 
-    # Devuelve un token nuevo: la sesión actual sigue activa y las demás se cierran.
+    # Emite un token con la nueva versión e invalida los anteriores.
     return Token(
         access_token=create_access_token(
-            str(current_user.id), current_user.token_version
+            str(current_user.id),
+            current_user.token_version,
         )
     )
