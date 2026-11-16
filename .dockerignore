@@ -26,7 +26,8 @@ backend/tests
 
 modelo
 runs
-docs
+docs/*
+!docs/licenses
 
 .vscode
 **/.ipynb_checkpoints

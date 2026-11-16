@@ -1,5 +1,6 @@
 import {
   ArrowUpRight,
+  ExternalLink,
   LayoutDashboard,
   LogOut,
   Monitor,
@@ -283,16 +284,46 @@ export default function AppLayout() {
             Inventario Visión · Proyecto académico
           </span>
 
-          <span className="flex items-center gap-1">
-            Detección con revisión humana
-            <ArrowUpRight
-              className="size-3"
-              aria-hidden="true"
-            />
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href="https://github.com/julian87-lab/Inventario-vision"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              Código fuente
+
+              <ExternalLink
+                className="size-3"
+                aria-hidden="true"
+              />
+            </a>
+
+            <a
+              href="/licenses/THIRD_PARTY_NOTICES.txt"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              Licencias
+
+              <ArrowUpRight
+                className="size-3"
+                aria-hidden="true"
+              />
+            </a>
+
+            <span className="flex items-center gap-1">
+              Detección con revisión humana
+
+              <ArrowUpRight
+                className="size-3"
+                aria-hidden="true"
+              />
+            </span>
+          </div>
         </footer>
       </div>
     </div>
   )
 }
-
